@@ -1,5 +1,11 @@
 import nodemailer from "nodemailer";
+import { setDefaultResultOrder } from "dns";
 import { logInfo, logWarn, logError } from "@/lib/logger";
+
+// smtp.gmail.com resolves to both IPv4 and IPv6. On hosts without an IPv6
+// route (Render, some local networks), Node picks IPv6 first → ENETUNREACH.
+// Force IPv4-first so the connection always goes to the reachable address.
+setDefaultResultOrder("ipv4first");
 
 // Boot-time check — visible in Render startup logs immediately if creds are missing
 if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
