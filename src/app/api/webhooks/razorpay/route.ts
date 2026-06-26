@@ -8,7 +8,7 @@ import { sendEmail } from "@/lib/mailer";
 
 export const runtime = "nodejs";
 
-const CANDIDATE_SENDER = "DealSchool <fellows@dealschool.in>";
+const CANDIDATE_SENDER = "DealSchool <admin@dealschool.in>";
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
