@@ -7,6 +7,7 @@ import { serializeDoc } from "@/lib/serialize";
 import { createRazorpayPaymentLink } from "@/lib/payment-service";
 import { getRazorpay } from "@/lib/razorpay";
 import { sendEmail } from "@/lib/mailer";
+import { logInfo, logWarn, logError } from "@/lib/logger";
 import {
   renderAppUnderReview,
   renderInterviewInvited,
@@ -37,24 +38,33 @@ export async function PATCH(
   const { id } = await params;
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  logInfo("api/applications/[id]", "PATCH received", { id, origin: origin ?? "none" });
 
   try { await verifyAdmin(request); }
-  catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers }); }
+  catch {
+    logWarn("api/applications/[id]", "Unauthorized PATCH attempt", { id });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+  }
 
   let body: any;
   try { body = await request.json(); }
-  catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }
+  catch {
+    logWarn("api/applications/[id]", "Invalid JSON body", { id });
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers });
+  }
 
   const docRef = adminDb.collection("applications").doc(id);
   const snap   = await docRef.get();
 
   if (!snap.exists) {
+    logWarn("api/applications/[id]", "Application not found", { id });
     return NextResponse.json({ error: "Application not found" }, { status: 404, headers });
   }
 
   const prevData   = snap.data()!;
   const prevStatus = prevData.status;
   const newStatus  = body.status;
+  logInfo("api/applications/[id]", "Status change requested", { id, prevStatus, newStatus, applicantEmail: prevData.email ?? "none" });
 
   const updatePayload: Record<string, any> = {
     ...body,
@@ -141,6 +151,7 @@ export async function PATCH(
 
     // Step 3 — send payment-link email (non-fatal; DB already committed)
     const feeDisplay = `₹${(link.feePaise / 100).toFixed(0)}`;
+    logInfo("api/applications/[id]", "Sending payment-link email", { id, applicantEmail: prevData.email, feeDisplay });
     sendEmail({
       from:    CANDIDATE_SENDER,
       to:      String(prevData.email),
@@ -150,11 +161,13 @@ export async function PATCH(
         linkUrl:    link.linkUrl,
         feeDisplay,
       }),
-    }).then(() =>
-      adminDb.collection("payments").doc(id).update({ emailSentAt: FieldValue.serverTimestamp() })
-    ).catch(console.error);
+    }).then(() => {
+      logInfo("api/applications/[id]", "Payment-link email sent OK", { id, applicantEmail: prevData.email });
+      return adminDb.collection("payments").doc(id).update({ emailSentAt: FieldValue.serverTimestamp() });
+    }).catch((err) => logError("api/applications/[id]", `Payment-link email FAILED id=${id} applicantEmail=${prevData.email}`, err));
 
     const updated = await docRef.get();
+    logInfo("api/applications/[id]", "PATCH 200 — application accepted", { id });
     return NextResponse.json(
       { success: true, application: { id, ...serializeDoc(updated.data()!) } },
       { headers },
@@ -163,6 +176,7 @@ export async function PATCH(
 
   // ── All other status changes ──────────────────────────────────────────────────
   await docRef.update(updatePayload);
+  logInfo("api/applications/[id]", "Firestore updated", { id, newStatus, prevStatus });
 
   if (newStatus && newStatus !== prevStatus) {
     const emailMap: Record<string, { subject: string; html: string }> = {
@@ -180,13 +194,22 @@ export async function PATCH(
       },
     };
     const tpl = emailMap[newStatus];
-    if (tpl && prevData.email) {
-      sendEmail({ from: CANDIDATE_SENDER, to: String(prevData.email), ...tpl }).catch(console.error);
+
+    if (!tpl) {
+      logInfo("api/applications/[id]", "No email template for this status — skipping email", { id, newStatus });
+    } else if (!prevData.email) {
+      logWarn("api/applications/[id]", "Applicant has no email address — status-change email skipped", { id, newStatus });
+    } else {
+      logInfo("api/applications/[id]", "Sending status-change email", { id, newStatus, applicantEmail: prevData.email, subject: tpl.subject });
+      sendEmail({ from: CANDIDATE_SENDER, to: String(prevData.email), ...tpl })
+        .then(() => logInfo("api/applications/[id]", "Status-change email sent OK", { id, newStatus, applicantEmail: prevData.email }))
+        .catch((err) => logError("api/applications/[id]", `Status-change email FAILED — applicant did NOT receive notification | id=${id} newStatus=${newStatus} applicantEmail=${prevData.email}`, err));
     }
   }
 
   const responsePayload = { ...updatePayload, updatedAt: new Date().toISOString() };
   const merged = serializeDoc({ ...prevData, ...responsePayload });
+  logInfo("api/applications/[id]", "PATCH 200 completed", { id, newStatus });
   return NextResponse.json(
     { success: true, application: { id, ...merged } },
     { headers },

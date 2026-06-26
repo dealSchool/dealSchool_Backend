@@ -4,6 +4,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
+import { logInfo, logWarn } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -15,18 +16,26 @@ export async function PATCH(
   const { id } = await params;
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  logInfo("api/contacts/[id]", "PATCH received", { id });
 
   try { await verifyAdmin(request); }
-  catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers }); }
+  catch {
+    logWarn("api/contacts/[id]", "Unauthorized PATCH attempt", { id });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+  }
 
   let body: any;
   try { body = await request.json(); }
-  catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }
+  catch {
+    logWarn("api/contacts/[id]", "Invalid JSON body", { id });
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers });
+  }
 
   const docRef = adminDb.collection("contacts").doc(id);
   const snap   = await docRef.get();
 
   if (!snap.exists) {
+    logWarn("api/contacts/[id]", "Contact not found", { id });
     return NextResponse.json({ error: "Contact not found" }, { status: 404, headers });
   }
 
@@ -38,9 +47,8 @@ export async function PATCH(
   delete updatePayload.createdAt;
 
   await docRef.update(updatePayload);
+  logInfo("api/contacts/[id]", "PATCH 200 — contact updated", { id, fields: Object.keys(body).join(",") });
 
-  // Build response from known data — avoids an extra Firestore read.
-  // Replace the FieldValue sentinel in updatedAt with a real ISO string.
   const prevData = snap.data()!;
   const responsePayload = { ...updatePayload, updatedAt: new Date().toISOString() };
   const merged = serializeDoc({ ...prevData, ...responsePayload });
@@ -58,16 +66,22 @@ export async function DELETE(
   const { id } = await params;
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  logInfo("api/contacts/[id]", "DELETE received", { id });
 
   try { await verifyAdmin(request); }
-  catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers }); }
+  catch {
+    logWarn("api/contacts/[id]", "Unauthorized DELETE attempt", { id });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+  }
 
   const snap = await adminDb.collection("contacts").doc(id).get();
   if (!snap.exists) {
+    logWarn("api/contacts/[id]", "Contact not found", { id });
     return NextResponse.json({ error: "Contact not found" }, { status: 404, headers });
   }
 
   await adminDb.collection("contacts").doc(id).delete();
+  logInfo("api/contacts/[id]", "DELETE 200 — contact deleted", { id });
   return NextResponse.json({ success: true }, { headers });
 }
 

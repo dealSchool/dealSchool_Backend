@@ -5,6 +5,7 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
 import { sendEmail } from "@/lib/mailer";
+import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { renderContactInquiryAdmin, renderContactInquiryCandidate } from "@/lib/email-templates";
@@ -70,12 +71,14 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip      = getClientIp(request);
+  logInfo("api/contacts", "POST received", { ip, origin: origin ?? "none" });
 
   try {
     // Rate limit: 5 submissions per 15 minutes per IP
-    const ip = getClientIp(request);
     const rl = await checkRateLimit(`contact:${ip}`, 5, 15 * 60 * 1000);
     if (!rl.allowed) {
+      logWarn("api/contacts", "Rate limited", { ip });
       return NextResponse.json(
         { error: "Too many requests. Please wait before submitting again." },
         { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
@@ -137,24 +140,26 @@ export async function POST(request: NextRequest) {
     });
 
     const adminEmail = process.env.ADMIN_EMAIL || "admin@dealschool.in";
+    logInfo("api/contacts", "Contact saved to Firestore", { contactId: docRef.id, senderEmail: safeEmail });
 
     sendEmail({
       from:    CONTACT_SENDER,
       to:      adminEmail,
       subject: `[Inquiry Ticket] From ${safeName}: ${safeSubject}`,
       html:    renderContactInquiryAdmin({ name: safeName, email: safeEmail, subject: safeSubject, message: safeMessage }),
-    }).catch(console.error);
+    }).catch((err) => logError("api/contacts", `Admin notification email FAILED contactId=${docRef.id} adminEmail=${adminEmail}`, err));
 
     sendEmail({
       from:    CONTACT_SENDER,
       to:      safeEmail,
       subject: "We received your message — DealSchool",
       html:    renderContactInquiryCandidate({ name: safeName, subject: safeSubject, message: safeMessage }),
-    }).catch(console.error);
+    }).catch((err) => logError("api/contacts", `Sender confirmation email FAILED contactId=${docRef.id} senderEmail=${safeEmail}`, err));
 
+    logInfo("api/contacts", "POST 201 completed", { contactId: docRef.id });
     return NextResponse.json({ success: true, contactId: docRef.id }, { status: 201, headers });
   } catch (err: any) {
-    console.error("[POST /api/contacts] Unhandled error:", err?.message ?? err);
+    logError("api/contacts", "POST unhandled error", err);
     return NextResponse.json({ error: "Internal server error. Please try again." }, { status: 500, headers });
   }
 }

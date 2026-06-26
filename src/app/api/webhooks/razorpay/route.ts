@@ -5,6 +5,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { getRazorpay } from "@/lib/razorpay";
 import { renderPaymentReceiptEmail, renderPaymentReceiptAdminEmail } from "@/lib/email-templates";
 import { sendEmail } from "@/lib/mailer";
+import { logInfo, logWarn, logError } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -12,16 +13,17 @@ const CANDIDATE_SENDER = "DealSchool <admin@dealschool.in>";
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
+  logInfo("api/webhooks/razorpay", "Webhook POST received", { bodyLength: rawBody.length });
 
   const incomingSig = request.headers.get("x-razorpay-signature");
   if (!incomingSig) {
-    console.error("[webhook] Missing x-razorpay-signature header");
+    logWarn("api/webhooks/razorpay", "Missing x-razorpay-signature header — rejected");
     return new Response("Missing signature", { status: 400 });
   }
 
   const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
   if (!webhookSecret) {
-    console.error("[webhook] RAZORPAY_WEBHOOK_SECRET env var is not set");
+    logError("api/webhooks/razorpay", "RAZORPAY_WEBHOOK_SECRET not set in environment — cannot verify signature");
     return new Response("Server misconfiguration", { status: 500 });
   }
 
@@ -43,18 +45,14 @@ export async function POST(request: NextRequest) {
   }
 
   if (!sigValid) {
-    console.error(
-      "[webhook] Signature FAILED — ensure RAZORPAY_WEBHOOK_SECRET in .env.local " +
-      "matches the secret saved in Razorpay dashboard → Settings → Webhooks"
-    );
+    logError("api/webhooks/razorpay", "Signature verification FAILED — check RAZORPAY_WEBHOOK_SECRET matches Razorpay dashboard → Settings → Webhooks");
     return new Response("Invalid signature", { status: 400 });
   }
 
-  const event          = JSON.parse(rawBody);
-  const eventType:     string = event.event || "";
-  const webhookEventId:string = event.id    || "";
-
-  console.log(`[webhook] ✓ Event: ${eventType} | id: ${webhookEventId}`);
+  const event           = JSON.parse(rawBody);
+  const eventType:      string = event.event || "";
+  const webhookEventId: string = event.id    || "";
+  logInfo("api/webhooks/razorpay", "Signature verified", { eventType, webhookEventId });
 
   // ─── payment_link.paid ───────────────────────────────────────────────────────
   if (eventType === "payment_link.paid") {
@@ -72,13 +70,10 @@ export async function POST(request: NextRequest) {
     const applicationId:    string =
       linkEntity.notes?.applicationId || linkEntity.reference_id || "";
 
-    console.log(
-      `[webhook] paid — appId: ${applicationId} | linkId: ${rzpPaymentLinkId} | ` +
-      `paymentId: ${rzpPaymentId} | amount: ${paidAmountPaise} paise`
-    );
+    logInfo("api/webhooks/razorpay", "payment_link.paid payload parsed", { applicationId, rzpPaymentLinkId, rzpPaymentId, paidAmountPaise });
 
     if (!applicationId) {
-      console.warn("[webhook] Cannot resolve applicationId — skipping");
+      logWarn("api/webhooks/razorpay", "Cannot resolve applicationId from webhook payload — skipping", { rzpPaymentLinkId });
       return new Response("OK", { status: 200 });
     }
 
@@ -98,27 +93,27 @@ export async function POST(request: NextRequest) {
       const rzp         = getRazorpay();
       const linkDetails = await rzp.paymentLink.fetch(rzpPaymentLinkId);
 
-      console.log(
-        `[webhook] cross-verify: linkStatus=${linkDetails.status} | ` +
-        `linkAmount=${linkDetails.amount} | expected=${feePaise}`
-      );
+      logInfo("api/webhooks/razorpay", "Razorpay cross-verify result", {
+        linkStatus: linkDetails.status,
+        linkAmount:  String(linkDetails.amount),
+        expectedFee: String(feePaise),
+      });
 
       if (linkDetails.status !== "paid") {
-        console.warn(`[webhook] Link status "${linkDetails.status}" ≠ "paid" — skipping`);
+        logWarn("api/webhooks/razorpay", `Cross-verify: link status "${linkDetails.status}" ≠ "paid" — skipping`, { applicationId });
         return new Response("OK", { status: 200 });
       }
       if ((linkDetails.amount as number) !== feePaise) {
-        console.warn(
-          `[webhook] Amount mismatch: Razorpay=${linkDetails.amount} expected=${feePaise} ` +
-          `— check FELLOWSHIP_FEE matches the amount the payment link was created with`
-        );
+        logWarn("api/webhooks/razorpay", `Cross-verify: amount mismatch — skipping`, {
+          applicationId,
+          razorpayAmount: String(linkDetails.amount),
+          expectedFee:    String(feePaise),
+          hint: "FELLOWSHIP_FEE env var may not match the fee the payment link was created with",
+        });
         return new Response("OK", { status: 200 });
       }
-    } catch (err: any) {
-      console.error(
-        "[webhook] Razorpay cross-verify FAILED:",
-        err?.error?.description || err?.message || err
-      );
+    } catch (err: unknown) {
+      logError("api/webhooks/razorpay", `Razorpay cross-verify API call FAILED applicationId=${applicationId}`, err);
       return new Response("OK", { status: 200 });
     }
 
@@ -134,11 +129,11 @@ export async function POST(request: NextRequest) {
         const d = snap.data()!;
         const seen = (d.processedWebhookIds as string[] | undefined) ?? [];
         if (seen.includes(webhookEventId)) {
-          console.log(`[webhook] Duplicate event ${webhookEventId} — skipping`);
+          logInfo("api/webhooks/razorpay", "Duplicate webhook event — skipping (idempotency)", { webhookEventId, applicationId });
           return;
         }
         if (d.status === "paid") {
-          console.log(`[webhook] App ${applicationId} already paid — skipping`);
+          logInfo("api/webhooks/razorpay", "Application already marked paid — skipping", { applicationId });
           return;
         }
       }
@@ -165,7 +160,7 @@ export async function POST(request: NextRequest) {
       return new Response("OK", { status: 200 });
     }
 
-    console.log(`[webhook] ✓ Firestore updated — app ${applicationId} marked as paid`);
+    logInfo("api/webhooks/razorpay", "Firestore updated — application marked as paid", { applicationId, rzpPaymentId });
 
     // suppress unused variable warning
     void paidAmountPaise;
@@ -177,8 +172,9 @@ export async function POST(request: NextRequest) {
     const adminEmail = process.env.ADMIN_EMAIL || "admin@dealschool.in";
 
     if (!appData?.email) {
-      console.warn(`[webhook] No email on app ${applicationId} — skipping emails`);
+      logWarn("api/webhooks/razorpay", "Applicant has no email address — payment receipt skipped", { applicationId });
     } else {
+      logInfo("api/webhooks/razorpay", "Sending payment receipt email", { applicationId, applicantEmail: appData.email });
       sendEmail({
         from:    CANDIDATE_SENDER,
         to:      String(appData.email),
@@ -189,9 +185,10 @@ export async function POST(request: NextRequest) {
           rzpPaymentId,
         }),
       })
-        .then(() => console.log(`[webhook] ✓ Receipt email → ${appData.email}`))
-        .catch((err) => console.error("[webhook] Receipt email FAILED:", err?.message));
+        .then(() => logInfo("api/webhooks/razorpay", "Payment receipt email sent OK", { applicationId, applicantEmail: appData.email }))
+        .catch((err) => logError("api/webhooks/razorpay", `Payment receipt email FAILED applicationId=${applicationId} applicantEmail=${appData.email}`, err));
 
+      logInfo("api/webhooks/razorpay", "Sending admin payment notification", { applicationId, adminEmail });
       sendEmail({
         from:    CANDIDATE_SENDER,
         to:      adminEmail,
@@ -204,8 +201,8 @@ export async function POST(request: NextRequest) {
           applicationId,
         }),
       })
-        .then(() => console.log(`[webhook] ✓ Admin notification → ${adminEmail}`))
-        .catch((err) => console.error("[webhook] Admin email FAILED:", err?.message));
+        .then(() => logInfo("api/webhooks/razorpay", "Admin payment notification sent OK", { applicationId, adminEmail }))
+        .catch((err) => logError("api/webhooks/razorpay", `Admin payment notification FAILED applicationId=${applicationId} adminEmail=${adminEmail}`, err));
     }
 
   // ─── payment_link.expired ────────────────────────────────────────────────────
@@ -217,7 +214,7 @@ export async function POST(request: NextRequest) {
       linkEntity.notes?.applicationId || linkEntity.reference_id || "";
     if (!applicationId) return new Response("OK", { status: 200 });
 
-    console.log(`[webhook] expired — appId: ${applicationId}`);
+    logInfo("api/webhooks/razorpay", "payment_link.expired", { applicationId });
 
     await adminDb.collection("payments").doc(applicationId).set(
       { status: "expired", updatedAt: FieldValue.serverTimestamp() },
@@ -227,10 +224,10 @@ export async function POST(request: NextRequest) {
       { paymentStatus: "expired", updatedAt: FieldValue.serverTimestamp() },
       { merge: true }
     );
-    console.log(`[webhook] ✓ Marked expired for app ${applicationId}`);
+    logInfo("api/webhooks/razorpay", "Payment link marked expired in Firestore", { applicationId });
 
   } else {
-    console.log(`[webhook] Unhandled event: ${eventType}`);
+    logInfo("api/webhooks/razorpay", "Unhandled event type — ignored", { eventType, webhookEventId });
   }
 
   return new Response("OK", { status: 200 });

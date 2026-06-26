@@ -3,6 +3,7 @@ import { adminDb } from "./firebase-admin";
 import { getRazorpay } from "./razorpay";
 import { sendEmail } from "./mailer";
 import { renderPaymentLinkEmail } from "./email-templates";
+import { logInfo, logWarn, logError } from "./logger";
 
 const CANDIDATE_SENDER = "DealSchool <admin@dealschool.in>";
 
@@ -91,8 +92,9 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
   let link: PaymentLinkData;
   try {
     link = await createRazorpayPaymentLink(applicationId, appData);
-  } catch (err: any) {
-    console.error("[payment-service] Razorpay error:", err?.error || err?.message);
+    logInfo("payment-service", "Razorpay payment link created", { applicationId, linkId: link.linkId, linkUrl: link.linkUrl, feePaise: String(link.feePaise) });
+  } catch (err: unknown) {
+    logError("payment-service", `Razorpay link creation FAILED applicationId=${applicationId}`, err);
     await appRef.update({ paymentStatus: "error" });
     return;
   }
@@ -122,10 +124,15 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
     updatedAt:         FieldValue.serverTimestamp(),
   });
 
-  const feeDisplay = `₹${(feePaise / 100).toFixed(0)}`;
-  const recipientEmail = String(appData.email || "");
+  const feeDisplay      = `₹${(feePaise / 100).toFixed(0)}`;
+  const recipientEmail  = String(appData.email || "");
 
-  console.log(`[payment-service] Sending payment link email to: ${recipientEmail}`);
+  if (!recipientEmail) {
+    logWarn("payment-service", "Applicant has no email — payment link email skipped", { applicationId });
+    return;
+  }
+
+  logInfo("payment-service", "Sending payment link email", { applicationId, recipientEmail, feeDisplay });
 
   try {
     await sendEmail({
@@ -134,11 +141,11 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
       subject: "Your DealSchool Fellowship Offer — Action Required",
       html:    renderPaymentLinkEmail({ fullName: String(appData.fullName || ""), linkUrl, feeDisplay }),
     });
-    console.log(`[payment-service] Email sent successfully to: ${recipientEmail}`);
+    logInfo("payment-service", "Payment link email sent OK", { applicationId, recipientEmail });
     await adminDb.collection("payments").doc(applicationId).update({
       emailSentAt: FieldValue.serverTimestamp(),
     });
-  } catch (err: any) {
-    console.error(`[payment-service] Email FAILED for ${recipientEmail}:`, err?.message || err);
+  } catch (err: unknown) {
+    logError("payment-service", `Payment link email FAILED — applicant did NOT receive payment link | applicationId=${applicationId} recipientEmail=${recipientEmail}`, err);
   }
 }

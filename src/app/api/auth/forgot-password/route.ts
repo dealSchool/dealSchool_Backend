@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAuth } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { sendEmail } from "@/lib/mailer";
+import { logInfo, logError } from "@/lib/logger";
 import { renderAdminPasswordReset } from "@/lib/email-templates";
 
 export const runtime = "nodejs";
@@ -22,6 +23,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "email is required" }, { status: 400, headers });
   }
 
+  logInfo("api/auth/forgot-password", "Password reset requested", { email: String(email) });
+
   // Generate link and send email — silently ignore errors to avoid leaking
   // whether an account exists for the given email address.
   try {
@@ -32,7 +35,11 @@ export async function POST(request: NextRequest) {
       subject: "DealSchool Admin Portal — Password Reset",
       html:    renderAdminPasswordReset({ resetLink }),
     });
-  } catch { /* non-fatal */ }
+    logInfo("api/auth/forgot-password", "Password reset email sent OK", { email: String(email) });
+  } catch (err) {
+    logError("api/auth/forgot-password", `Password reset email FAILED email=${String(email)}`, err);
+    // non-fatal: always return 200 to avoid leaking whether the account exists
+  }
 
   return NextResponse.json({ success: true }, { headers });
 }

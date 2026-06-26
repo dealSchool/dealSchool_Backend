@@ -5,6 +5,7 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
 import { sendEmail } from "@/lib/mailer";
+import { logInfo, logError, logWarn } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import {
@@ -80,11 +81,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip      = getClientIp(request);
+  logInfo("api/applications", "POST received", { ip, origin: origin ?? "none" });
 
   // Rate limit: 5 submissions per 15 minutes per IP
-  const ip = getClientIp(request);
   const rl = await checkRateLimit(`apply:${ip}`, 5, 15 * 60 * 1000);
   if (!rl.allowed) {
+    logWarn("api/applications", "Rate limited", { ip });
     return NextResponse.json(
       { error: "Too many requests. Please wait before submitting again." },
       { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
@@ -176,6 +179,7 @@ export async function POST(request: NextRequest) {
   };
 
   await docRef.set(payload);
+  logInfo("api/applications", "Application saved to Firestore", { applicationId: docRef.id, email: data.email, currentStatus: data.currentStatus });
 
   // ── Emails (non-fatal) ──────────────────────────────────────────────────────
   const adminEmail = process.env.ADMIN_EMAIL || "admin@dealschool.in";
@@ -207,7 +211,7 @@ export async function POST(request: NextRequest) {
           ? String(data.primaryReasonOther || "Other Purpose")
           : String(data.primaryReason || ""),
     }),
-  }).catch(console.error);
+  }).catch((err) => logError("api/applications", `Candidate confirmation email failed applicantEmail=${data.email} applicationId=${docRef.id}`, err));
 
   sendEmail({
     from:    ADMIN_SENDER,
@@ -242,8 +246,9 @@ export async function POST(request: NextRequest) {
       assessmentQ2:   String(data.assessmentQ2 || ""),
       assessmentQ3:   String(data.assessmentQ3 || ""),
     }),
-  }).catch(console.error);
+  }).catch((err) => logError("api/applications", `Admin notification email failed adminEmail=${adminEmail} applicationId=${docRef.id}`, err));
 
+  logInfo("api/applications", "POST 201 completed", { applicationId: docRef.id });
   return NextResponse.json({ success: true, applicationId: docRef.id }, { status: 201, headers });
 }
 

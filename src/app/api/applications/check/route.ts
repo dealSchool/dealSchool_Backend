@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { isValidEmail } from "@/lib/validate";
+import { logInfo, logWarn } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,10 @@ export async function POST(request: NextRequest) {
 
   let body: any;
   try { body = await request.json(); }
-  catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400, headers }); }
+  catch {
+    logWarn("api/applications/check", "Invalid JSON body");
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400, headers });
+  }
 
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : null;
   const phone = typeof body.phone === "string" ? body.phone.trim() : null;
@@ -34,13 +38,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid email address" }, { status: 400, headers });
   }
 
-  // Run only the queries we have data for
   const queries: Promise<FirebaseFirestore.QuerySnapshot>[] = [];
   if (email) queries.push(adminDb.collection("applications").where("email", "==", email).limit(1).get());
   if (phone) queries.push(adminDb.collection("applications").where("mobileNumber", "==", phone).limit(1).get());
 
   const snaps = await Promise.all(queries);
   const alreadyApplied = snaps.some((s) => !s.empty);
+
+  logInfo("api/applications/check", "Duplicate check completed", { email: email ?? "none", phone: phone ?? "none", alreadyApplied: String(alreadyApplied) });
 
   return NextResponse.json(
     alreadyApplied
