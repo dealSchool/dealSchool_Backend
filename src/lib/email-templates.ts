@@ -113,6 +113,13 @@ function p(html: string, style = ""): string {
   return `<p style="margin:0 0 16px;font-family:${FONT};font-size:15px;color:#111111;line-height:1.75;${style}">${html}</p>`;
 }
 
+function twoCol(left: string, right: string): string {
+  return `<table width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td width="50%" style="vertical-align:top;padding-right:6px;">${left}</td>
+    <td width="50%" style="vertical-align:top;padding-left:6px;">${right}</td>
+  </tr></table>`;
+}
+
 function signature(name: string): string {
   return `<p style="margin:24px 0 0;font-family:${FONT};font-size:15px;color:#111111;line-height:1.75;">Warm regards,<br /><strong>${name}</strong></p>`;
 }
@@ -139,7 +146,7 @@ export function renderAppReceivedCandidate(pr: AppReceivedCandidateProps): strin
   return base(`
 ${greeting(pr.fullName)}
 ${p("Thank you for applying to the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong>. We're excited to review your application — our admissions committee will be in touch soon.")}
-${infoBanner("&#10003;&nbsp;&nbsp;Your application has been successfully received and is now in queue for initial review.")}
+${infoBanner("&#10003;&nbsp;&nbsp;Your application has been successfully received and is currently pending review by our admissions committee.")}
 ${sectionTitle("Application Summary")}
 <div style="padding:9px 0 9px 14px;border-left:2px solid #EDE9DE;margin-bottom:6px;">
   <div style="font-family:${FONT};font-size:10px;font-weight:600;color:#5F6368;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">Status</div>
@@ -196,45 +203,38 @@ export function renderAppReceivedAdmin(pr: AppReceivedAdminProps): string {
   const hasFreelancer = pr.areaOfWork || pr.freelancerLinkedinProfile;
   const hasAssessment = pr.assessmentQ1 || pr.assessmentQ2 || pr.assessmentQ3;
 
+  const statusBadgeField = `<div style="padding:9px 0 9px 14px;border-left:2px solid #EDE9DE;margin-bottom:6px;">
+    <div style="font-family:${FONT};font-size:10px;font-weight:600;color:#5F6368;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">Current Status</div>
+    <div>${badge(pr.currentStatus)}</div>
+  </div>`;
+
   return base(`
-<p style="margin:0 0 4px;font-family:${FONT};font-size:13px;color:#5F6368;">New Submission</p>
-<p style="margin:0 0 24px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Fellowship Application Received</p>
+<p style="margin:0 0 4px;font-family:${FONT};font-size:11px;color:#5F6368;text-transform:uppercase;letter-spacing:1.5px;">New Submission</p>
+<p style="margin:0 0 20px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Fellowship Application Received</p>
 
 ${sectionTitle("Applicant Information")}
-${field("Full Name", pr.fullName)}
-${field("Email Address", pr.email)}
-${field("Phone Number", pr.mobileNumber)}
-${field("City", pr.city)}
+${twoCol(field("Full Name", pr.fullName), field("Email Address", pr.email))}
+${twoCol(field("Phone Number", pr.mobileNumber), field("City", pr.city))}
 ${fieldLink("LinkedIn Profile", pr.linkedinUrl)}
 
 ${sectionTitle("Professional Profile")}
-<div style="padding:9px 0 9px 14px;border-left:2px solid #EDE9DE;margin-bottom:6px;">
-  <div style="font-family:${FONT};font-size:10px;font-weight:600;color:#5F6368;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">Current Status</div>
-  <div>${badge(pr.currentStatus)}</div>
-</div>
-${field("Current Role", pr.currentRole)}
-${field("Company / Organisation", pr.companyName)}
-${pr.yearsOfExperience ? field("Years of Experience", String(pr.yearsOfExperience)) : ""}
-${field("Other Status", pr.otherStatusSpecify)}
+${twoCol(statusBadgeField, field("Current Role", pr.currentRole))}
+${twoCol(field("Company / Organisation", pr.companyName), pr.yearsOfExperience ? field("Years of Experience", String(pr.yearsOfExperience)) : "")}
+${pr.otherStatusSpecify ? field("Other Status", pr.otherStatusSpecify) : ""}
 
 ${hasEducation ? `${sectionTitle("Education")}
-${field("College / University", pr.collegeName)}
-${field("Degree", pr.degree)}
-${pr.graduationYear ? field("Graduation Year", String(pr.graduationYear)) : ""}
-${field("Educational Background", pr.degreeEducationalBackground)}` : ""}
+${twoCol(field("College / University", pr.collegeName), field("Degree", pr.degree))}
+${twoCol(pr.graduationYear ? field("Graduation Year", String(pr.graduationYear)) : "", field("Educational Background", pr.degreeEducationalBackground))}` : ""}
 
 ${hasStartup ? `${sectionTitle("Startup Details")}
-${field("Startup Name", pr.startupName)}
-${field("Industry Sector", pr.industrySector)}
+${twoCol(field("Startup Name", pr.startupName), field("Industry Sector", pr.industrySector))}
 ${fieldLink("Startup LinkedIn", pr.startupLinkedinProfile)}` : ""}
 
 ${hasFreelancer ? `${sectionTitle("Freelancer Details")}
-${field("Area of Work", pr.areaOfWork)}
-${fieldLink("Freelancer LinkedIn", pr.freelancerLinkedinProfile)}` : ""}
+${twoCol(field("Area of Work", pr.areaOfWork), fieldLink("Freelancer LinkedIn", pr.freelancerLinkedinProfile))}` : ""}
 
 ${sectionTitle("Application Details")}
-${field("Primary Reason", reason)}
-${field("Discovery Source", discovery)}
+${twoCol(field("Primary Reason", reason), field("Discovery Source", discovery))}
 ${fieldLink("Resume / Portfolio", pr.resumeUrl)}
 
 ${hasAssessment ? `${sectionTitle("Assessment Responses")}
