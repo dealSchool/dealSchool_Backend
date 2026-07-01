@@ -5,7 +5,7 @@ import { sendEmail } from "./mailer";
 import { renderPaymentLinkEmail } from "./email-templates";
 import { logInfo, logWarn, logError } from "./logger";
 
-const CANDIDATE_SENDER = "DealSchool <admin@dealschool.in>";
+const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
 
 export interface PaymentLinkData {
   linkId:    string;

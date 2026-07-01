@@ -9,7 +9,7 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
-const CANDIDATE_SENDER = "DealSchool <admin@dealschool.in>";
+const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -169,7 +169,7 @@ export async function POST(request: NextRequest) {
     const appSnap  = await appRef.get();
     const appData  = appSnap.data();
     const feeDisplay = `₹${(feePaise / 100).toFixed(0)}`;
-    const adminEmail = process.env.ADMIN_EMAIL || "admin@dealschool.in";
+    const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
 
     if (!appData?.email) {
       logWarn("api/webhooks/razorpay", "Applicant has no email address — payment receipt skipped", { applicationId });

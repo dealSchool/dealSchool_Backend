@@ -15,8 +15,8 @@ import {
 
 export const runtime = "nodejs";
 
-const CANDIDATE_SENDER = "DealSchool <admin@dealschool.in>";
-const ADMIN_SENDER     = "DealSchool <admin@dealschool.in>";
+const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
+const ADMIN_SENDER     = "DealSchool <support@dealschool.in>";
 
 const PAGE_SIZE = 50;
 
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
       {
         alreadyApplied: true,
         error:
-          "You've already applied to DealSchool. Our team will reach out to you shortly. For any queries, contact admin@dealschool.in",
+          "You've already applied to DealSchool. Our team will reach out to you shortly. For any queries, contact support@dealschool.in",
       },
       { status: 409, headers }
     );
@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
   logInfo("api/applications", "Application saved to Firestore", { applicationId: docRef.id, email: data.email, currentStatus: data.currentStatus });
 
   // ── Emails (non-fatal) ──────────────────────────────────────────────────────
-  const adminEmail = process.env.ADMIN_EMAIL || "admin@dealschool.in";
+  const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
 
   let affiliationLabel = "Affiliation Detail";
   let affiliationValue = "Core Curriculum";

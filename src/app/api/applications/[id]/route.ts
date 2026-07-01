@@ -17,7 +17,7 @@ import {
 
 export const runtime = "nodejs";
 
-const CANDIDATE_SENDER = "DealSchool <admin@dealschool.in>";
+const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
 
 // Fields that must never be set directly by an admin PATCH — they are owned
 // exclusively by the payment flow and the Razorpay webhook.

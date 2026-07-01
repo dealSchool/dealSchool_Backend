@@ -12,7 +12,7 @@ import { renderContactInquiryAdmin, renderContactInquiryCandidate } from "@/lib/
 
 export const runtime = "nodejs";
 
-const CONTACT_SENDER = "DealSchool HelpDesk <admin@dealschool.in>";
+const CONTACT_SENDER = "DealSchool HelpDesk <support@dealschool.in>";
 
 const PAGE_SIZE = 50;
 
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    const adminEmail = process.env.ADMIN_EMAIL || "admin@dealschool.in";
+    const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
     logInfo("api/contacts", "Contact saved to Firestore", { contactId: docRef.id, senderEmail: safeEmail });
 
     sendEmail({

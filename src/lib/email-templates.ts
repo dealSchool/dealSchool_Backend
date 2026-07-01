@@ -158,7 +158,7 @@ ${divider()}
 <div style="background:#FAFAF8;border-radius:8px;padding:20px 24px;margin:20px 0;">
   <p style="margin:0 0 8px;font-family:${FONT};font-size:14px;font-weight:700;color:#082C6C;">What happens next?</p>
   <p style="margin:0 0 8px;font-family:${FONT};font-size:14px;color:#374151;">Our admissions team will review your application and reach out within <strong>3–5 business days</strong>. Watch this inbox for updates on your application status.</p>
-  <p style="margin:0;font-family:${FONT};font-size:14px;color:#374151;">In the meantime, feel free to reach us at <a href="mailto:admin@dealschool.in" style="color:#0D3B8E;">admin@dealschool.in</a> if you have any questions.</p>
+  <p style="margin:0;font-family:${FONT};font-size:14px;color:#374151;">In the meantime, feel free to reach us at <a href="mailto:support@dealschool.in" style="color:#0D3B8E;">support@dealschool.in</a> if you have any questions.</p>
 </div>
 ${signature("DealSchool Admissions Team")}`);
 }
@@ -288,7 +288,7 @@ ${sectionTitle("Payment Details")}
 ${field("Fellowship Fee", pr.feeDisplay)}
 ${field("Link Validity", "30 minutes from time of issue")}
 <p style="margin:20px 0 8px;">${btn(pr.linkUrl, "Complete Payment &rarr;")}</p>
-<p style="margin:0;font-family:${FONT};font-size:13px;color:#5F6368;">If this link has expired, please contact us at <a href="mailto:admin@dealschool.in" style="color:#0D3B8E;">admin@dealschool.in</a> and we'll issue a fresh one promptly.</p>
+<p style="margin:0;font-family:${FONT};font-size:13px;color:#5F6368;">If this link has expired, please contact us at <a href="mailto:support@dealschool.in" style="color:#0D3B8E;">support@dealschool.in</a> and we'll issue a fresh one promptly.</p>
 ${signature("DealSchool Team")}`);
 }
 
@@ -350,7 +350,7 @@ ${p("Use the code below to confirm your Admin Portal password change. Do not sha
 <p style="font-size:40px;font-family:'Courier New',Courier,monospace;letter-spacing:14px;text-align:center;font-weight:700;color:#082C6C;margin:28px 0;background:#FAFAF8;border-radius:8px;padding:24px 0;">${esc(pr.otpCode)}</p>
 <p style="text-align:center;font-family:${FONT};color:#5F6368;font-size:13px;margin:0 0 16px;">Valid for <strong>10 minutes</strong> only. Do not share this with anyone.</p>
 ${divider()}
-<p style="margin:0;font-family:${FONT};font-size:12px;color:#9ca3af;">If you did not initiate this request, please review your account security immediately or contact us at <a href="mailto:admin@dealschool.in" style="color:#0D3B8E;">admin@dealschool.in</a>.</p>`);
+<p style="margin:0;font-family:${FONT};font-size:12px;color:#9ca3af;">If you did not initiate this request, please review your account security immediately or contact us at <a href="mailto:support@dealschool.in" style="color:#0D3B8E;">support@dealschool.in</a>.</p>`);
 }
 
 // ─── Contact inquiry ──────────────────────────────────────────────────────────
