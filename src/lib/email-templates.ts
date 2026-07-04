@@ -329,6 +329,78 @@ ${field("Razorpay Payment ID", pr.rzpPaymentId)}
 ${field("Application ID", pr.applicationId)}`);
 }
 
+// ─── Cancellation / refund emails ─────────────────────────────────────────────
+
+export function renderCancellationNoRefundEmail(pr: { fullName: string; feeDisplay: string }): string {
+  return base(`
+${greeting(pr.fullName)}
+${p("We've processed your request to cancel your seat in the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong>.")}
+${infoBanner(`Per our cancellation policy, requests made on or after the programme start date are not eligible for a refund, so your fee of <strong>${esc(pr.feeDisplay)}</strong> is non-refundable in this case.`)}
+${p("If you believe this is a mistake, please reach out to us at <a href=\"mailto:support@dealschool.in\" style=\"color:#0D3B8E;\">support@dealschool.in</a>.")}
+${signature("DealSchool Team")}`);
+}
+
+export function renderRefundInitiatedEmail(pr: {
+  fullName: string;
+  feeDisplay: string;
+  refundDisplay: string;
+  refundPercent: number;
+}): string {
+  return base(`
+${greeting(pr.fullName)}
+${p("We've processed your cancellation request for the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong>.")}
+${infoBanner(`Per our cancellation policy, you're eligible for a <strong>${pr.refundPercent}% refund</strong>. A refund of <strong>${esc(pr.refundDisplay)}</strong> (of your ${esc(pr.feeDisplay)} fee) has been initiated to your original payment method.`)}
+${sectionTitle("Refund Details")}
+${field("Fee Paid", pr.feeDisplay)}
+${field("Refund Amount", pr.refundDisplay)}
+${field("Refund %", `${pr.refundPercent}%`)}
+<p style="margin:0;font-family:${FONT};font-size:13px;color:#5F6368;">Refunds typically take <strong>5–7 business days</strong> to reflect in your account, depending on your bank. We'll email you again once it's completed.</p>
+${signature("DealSchool Team")}`);
+}
+
+export function renderRefundCompletedEmail(pr: {
+  applicantName: string;
+  refundDisplay: string;
+  rzpRefundId: string;
+}): string {
+  return base(`
+${greeting(pr.applicantName)}
+${p("Your refund for the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong> has been <strong>completed</strong>.")}
+${sectionTitle("Refund Confirmation")}
+${field("Amount Refunded", pr.refundDisplay)}
+${field("Refund ID", pr.rzpRefundId)}
+${p("It may take a few additional days for your bank to reflect this in your statement.")}
+${signature("DealSchool Team")}`);
+}
+
+export interface RefundAdminNotificationProps {
+  applicantName: string;
+  applicantEmail: string;
+  applicationId: string;
+  status: "initiated" | "completed" | "failed";
+  refundDisplay: string;
+  refundPercent: number;
+  rzpRefundId: string;
+}
+
+export function renderRefundAdminNotification(pr: RefundAdminNotificationProps): string {
+  const statusLabel =
+    pr.status === "initiated" ? "Refund Initiated" :
+    pr.status === "completed" ? "Refund Completed" : "Refund FAILED";
+
+  return base(`
+<p style="margin:0 0 4px;font-family:${FONT};font-size:13px;color:#5F6368;">${statusLabel}</p>
+<p style="margin:0 0 24px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Fellowship Fee Refund ${badge(pr.status.toUpperCase())}</p>
+${sectionTitle("Refund Details")}
+${field("Applicant Name", pr.applicantName)}
+${field("Email Address", pr.applicantEmail)}
+${field("Refund Amount", pr.refundDisplay)}
+${field("Refund %", `${pr.refundPercent}%`)}
+${field("Razorpay Refund ID", pr.rzpRefundId)}
+${field("Application ID", pr.applicationId)}
+${pr.status === "failed" ? infoBanner("This refund FAILED at Razorpay. Please investigate and process it manually via the Razorpay dashboard if needed.") : ""}`);
+}
+
 // ─── Admin password reset ─────────────────────────────────────────────────────
 
 export function renderAdminPasswordReset(pr: { resetLink: string }): string {

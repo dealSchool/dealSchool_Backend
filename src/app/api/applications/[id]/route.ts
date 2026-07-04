@@ -66,6 +66,17 @@ export async function PATCH(
   const newStatus  = body.status;
   logInfo("api/applications/[id]", "Status change requested", { id, prevStatus, newStatus, applicantEmail: prevData.email ?? "none" });
 
+  // "cancelled" carries refund-policy side effects (Razorpay refund, refund
+  // emails) that only POST /api/applications/[id]/cancel knows how to run —
+  // block it here so it can never be set as a bare status flip.
+  if (newStatus === "cancelled") {
+    logWarn("api/applications/[id]", "Rejected direct status=cancelled PATCH — use /cancel endpoint", { id });
+    return NextResponse.json(
+      { error: "Use POST /api/applications/[id]/cancel to cancel an application — it also processes any refund owed." },
+      { status: 400, headers },
+    );
+  }
+
   const updatePayload: Record<string, any> = {
     ...body,
     updatedAt: FieldValue.serverTimestamp(),
@@ -244,14 +255,21 @@ export async function DELETE(
 
   const appData     = appSnap.data()!;
   const paymentData = paymentSnap.exists ? paymentSnap.data()! : null;
-  const hasPaid     =
-    appData.paymentStatus === "paid" ||
-    (paymentData?.status === "paid");
 
-  // If payment was completed and admin hasn't confirmed, ask for confirmation
+  // Any status that means money moved (or is moving) — not just "currently paid".
+  // Deleting the record mid-refund or post-refund would destroy the only audit
+  // trail of that transaction, so it needs the same confirmation gate.
+  const PAYMENT_HISTORY_STATUSES = new Set(["paid", "refund_pending", "refunded", "refund_failed"]);
+  const hasPaid =
+    PAYMENT_HISTORY_STATUSES.has(String(appData.paymentStatus)) ||
+    PAYMENT_HISTORY_STATUSES.has(String(paymentData?.status));
+
+  // If payment was completed (or a refund is/was in progress) and admin hasn't
+  // confirmed, ask for confirmation
   if (hasPaid && !confirmed) {
     const feePaise   = paymentData?.amount ?? parseInt(process.env.FELLOWSHIP_FEE || "100", 10) * 100;
     const feeDisplay = `₹${(feePaise / 100).toFixed(0)}`;
+    const refundState = paymentData?.status && paymentData.status !== "paid" ? paymentData.status : null;
     return NextResponse.json(
       {
         requiresConfirmation: true,
@@ -259,10 +277,15 @@ export async function DELETE(
         applicantEmail:       String(appData.email    || ""),
         feeDisplay,
         rzpPaymentId:         String(paymentData?.rzpPaymentId || appData.rzpPaymentId || ""),
-        message:
-          `${String(appData.fullName || "This applicant")} has already paid the fellowship fee of ` +
-          `${feeDisplay}. Deleting this record will not trigger a refund. ` +
-          `You must process the refund manually via the Razorpay dashboard.`,
+        refundState,
+        message: refundState
+          ? `${String(appData.fullName || "This applicant")} has a refund in status "${refundState}" for their ` +
+            `${feeDisplay} fellowship fee. Deleting this record will destroy that history — it will not affect ` +
+            `the actual Razorpay transaction.`
+          : `${String(appData.fullName || "This applicant")} has already paid the fellowship fee of ` +
+            `${feeDisplay}. Deleting this record will not trigger a refund. ` +
+            `You must process the refund manually via the Razorpay dashboard, or use ` +
+            `POST /api/applications/${id}/cancel instead of deleting.`,
       },
       { status: 409, headers }
     );

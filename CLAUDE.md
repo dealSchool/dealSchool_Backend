@@ -5,3 +5,7 @@
 **NEVER delete, overwrite, or modify `.env.local` under any circumstances.**
 
 This file contains environment variables and secrets required for the application to run. It must not be touched in any operation — not during refactors, cleanups, file generation, or any other task. If a task seems to require modifying `.env.local`, stop and ask the user instead.
+
+## Artifacts
+
+Do not use the Artifact tool unless the user explicitly asks for an artifact/page. Deliver docs, guides, and reports as plain chat responses (markdown) by default.

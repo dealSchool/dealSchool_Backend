@@ -1,6 +1,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import { getRazorpay } from "./razorpay";
+import { getCohortSettings } from "./cohort-settings";
 import { sendEmail } from "./mailer";
 import { renderPaymentLinkEmail } from "./email-templates";
 import { logInfo, logWarn, logError } from "./logger";
@@ -22,8 +23,8 @@ export async function createRazorpayPaymentLink(
   applicationId: string,
   appData: { fullName?: string; email?: string; mobileNumber?: string },
 ): Promise<PaymentLinkData> {
-  const feePaise   = parseInt(process.env.FELLOWSHIP_FEE || "100", 10) * 100;
-  const appBaseUrl = (process.env.APP_BASE_URL || "http://localhost:3000/").replace(/\/$/, "/");
+  const { feePaise } = await getCohortSettings();
+  const appBaseUrl   = (process.env.APP_BASE_URL || "http://localhost:3000/").replace(/\/$/, "/");
   const expiryUnix = Math.floor(Date.now() / 1000) + 1800;
 
   const rzp         = getRazorpay();

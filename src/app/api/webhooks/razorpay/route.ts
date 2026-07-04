@@ -3,7 +3,12 @@ import * as crypto from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { getRazorpay } from "@/lib/razorpay";
-import { renderPaymentReceiptEmail, renderPaymentReceiptAdminEmail } from "@/lib/email-templates";
+import {
+  renderPaymentReceiptEmail,
+  renderPaymentReceiptAdminEmail,
+  renderRefundCompletedEmail,
+  renderRefundAdminNotification,
+} from "@/lib/email-templates";
 import { sendEmail } from "@/lib/mailer";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 
@@ -225,6 +230,116 @@ export async function POST(request: NextRequest) {
       { merge: true }
     );
     logInfo("api/webhooks/razorpay", "Payment link marked expired in Firestore", { applicationId });
+
+  // ─── refund.processed / refund.failed ────────────────────────────────────────
+  // Fired asynchronously after /api/applications/[id]/cancel initiates a refund
+  // (Razorpay "normal" speed refunds settle in 5-7 business days).
+  } else if (eventType === "refund.processed" || eventType === "refund.failed") {
+    const refundEntity = event.payload?.refund?.entity;
+    if (!refundEntity) return new Response("OK", { status: 200 });
+
+    // We set notes.applicationId ourselves when creating the refund — see
+    // src/app/api/applications/[id]/cancel/route.ts.
+    const applicationId: string = refundEntity.notes?.applicationId || "";
+    if (!applicationId) {
+      logWarn("api/webhooks/razorpay", "Cannot resolve applicationId from refund webhook — skipping", { rzpRefundId: refundEntity.id });
+      return new Response("OK", { status: 200 });
+    }
+
+    const isProcessed = eventType === "refund.processed";
+    const newStatus    = isProcessed ? "refunded" : "refund_failed";
+
+    logInfo("api/webhooks/razorpay", `${eventType} payload parsed`, { applicationId, rzpRefundId: refundEntity.id });
+
+    const paymentRef = adminDb.collection("payments").doc(applicationId);
+    const appRef      = adminDb.collection("applications").doc(applicationId);
+
+    let transactionDidWrite = false;
+    await adminDb.runTransaction(async (t) => {
+      transactionDidWrite = false; // reset on each retry attempt
+
+      const snap = await t.get(paymentRef);
+      if (snap.exists) {
+        const d = snap.data()!;
+        const seen = (d.processedWebhookIds as string[] | undefined) ?? [];
+        if (seen.includes(webhookEventId)) {
+          logInfo("api/webhooks/razorpay", "Duplicate refund webhook event — skipping (idempotency)", { webhookEventId, applicationId });
+          return;
+        }
+        if (d.status === newStatus) {
+          logInfo("api/webhooks/razorpay", "Refund status already applied — skipping", { applicationId, newStatus });
+          return;
+        }
+        // A completed refund is terminal — never let a late/out-of-order
+        // "refund.failed" redelivery regress it back to failed.
+        if (d.status === "refunded" && !isProcessed) {
+          logWarn("api/webhooks/razorpay", "Ignoring refund.failed for an already-refunded payment (stale/out-of-order webhook)", { applicationId });
+          return;
+        }
+      }
+
+      t.set(paymentRef, {
+        status:      newStatus,
+        rzpRefundId: refundEntity.id,
+        ...(isProcessed ? { refundedAt: FieldValue.serverTimestamp() } : {}),
+        updatedAt:   FieldValue.serverTimestamp(),
+        processedWebhookIds: FieldValue.arrayUnion(webhookEventId),
+      }, { merge: true });
+
+      t.set(appRef, {
+        paymentStatus: newStatus,
+        updatedAt:     FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      transactionDidWrite = true;
+    });
+
+    if (!transactionDidWrite) {
+      return new Response("OK", { status: 200 });
+    }
+
+    logInfo("api/webhooks/razorpay", `Firestore updated — refund ${newStatus}`, { applicationId, rzpRefundId: refundEntity.id });
+
+    // ── Send emails (non-fatal, DB already committed) ────────────────────────
+    const appSnap           = await appRef.get();
+    const appData           = appSnap.data();
+    const refundAmountPaise = refundEntity.amount as number;
+    const refundDisplay     = `₹${(refundAmountPaise / 100).toFixed(0)}`;
+    const adminEmail        = process.env.ADMIN_EMAIL || "support@dealschool.in";
+
+    if (isProcessed && appData?.email) {
+      logInfo("api/webhooks/razorpay", "Sending refund completed email", { applicationId, applicantEmail: appData.email });
+      sendEmail({
+        from:    CANDIDATE_SENDER,
+        to:      String(appData.email),
+        subject: "Your DealSchool Fellowship Refund Has Been Completed",
+        html:    renderRefundCompletedEmail({
+          applicantName: String(appData.fullName || "Fellow"),
+          refundDisplay,
+          rzpRefundId:   refundEntity.id,
+        }),
+      })
+        .then(() => logInfo("api/webhooks/razorpay", "Refund completed email sent OK", { applicationId, applicantEmail: appData.email }))
+        .catch((err) => logError("api/webhooks/razorpay", `Refund completed email FAILED applicationId=${applicationId}`, err));
+    }
+
+    logInfo("api/webhooks/razorpay", `Sending admin refund ${newStatus} notification`, { applicationId, adminEmail });
+    sendEmail({
+      from:    CANDIDATE_SENDER,
+      to:      adminEmail,
+      subject: `[Refund ${isProcessed ? "Completed" : "FAILED"}] ${String(appData?.fullName || "Fellow")} — ${refundDisplay}`,
+      html:    renderRefundAdminNotification({
+        applicantName:  String(appData?.fullName || "Fellow"),
+        applicantEmail: String(appData?.email || ""),
+        applicationId,
+        status:         isProcessed ? "completed" : "failed",
+        refundDisplay,
+        refundPercent:  Number(appData?.refundPercent ?? 0),
+        rzpRefundId:    refundEntity.id,
+      }),
+    })
+      .then(() => logInfo("api/webhooks/razorpay", "Admin refund notification sent OK", { applicationId, adminEmail }))
+      .catch((err) => logError("api/webhooks/razorpay", `Admin refund notification FAILED applicationId=${applicationId}`, err));
 
   } else {
     logInfo("api/webhooks/razorpay", "Unhandled event type — ignored", { eventType, webhookEventId });
