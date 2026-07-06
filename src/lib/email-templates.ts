@@ -47,8 +47,7 @@ function base(content: string): string {
         <!-- ── FOOTER ── -->
         <tr>
           <td style="background:#082C6C;padding:24px 40px;text-align:center;">
-            <p style="margin:0 0 5px;font-family:${FONT};font-size:13px;font-weight:700;color:#D4A62A;letter-spacing:2.5px;text-transform:uppercase;">DealSchool</p>
-            <p style="margin:0;font-family:${FONT};font-size:11px;color:rgba(255,255,255,0.45);letter-spacing:1px;">Empowering India's Deal Ecosystem</p>
+            <p style="margin:0;font-family:${FONT};font-size:13px;font-weight:700;color:#D4A62A;letter-spacing:2.5px;text-transform:uppercase;">DealSchool</p>
           </td>
         </tr>
 
@@ -97,10 +96,6 @@ function answerBox(text: string): string {
   return `<div style="background:#FAFAF8;border-radius:8px;padding:16px 20px;font-family:${FONT};font-size:14px;line-height:1.65;color:#374151;border:1px solid #EDE9DE;margin:6px 0 18px;white-space:pre-wrap;word-break:break-word;">${esc(text)}</div>`;
 }
 
-function qLabel(text: string): string {
-  return `<p style="margin:16px 0 4px;font-family:${FONT};font-size:12px;font-weight:700;color:#082C6C;letter-spacing:0.5px;text-transform:uppercase;">${text}</p>`;
-}
-
 function divider(): string {
   return `<hr style="border:none;border-top:1px solid #EDEAE2;margin:24px 0;" />`;
 }
@@ -145,7 +140,7 @@ export interface AppReceivedCandidateProps {
 export function renderAppReceivedCandidate(pr: AppReceivedCandidateProps): string {
   return base(`
 ${greeting(pr.fullName)}
-${p("Thank you for applying to the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong>. We're excited to review your application — our admissions committee will be in touch soon.")}
+${p("Thank you for applying to the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong>. We're excited to review your application, and our admissions committee will be in touch soon.")}
 ${infoBanner("&#10003;&nbsp;&nbsp;Your application has been successfully received and is currently pending review by our admissions committee.")}
 ${sectionTitle("Application Summary")}
 <div style="padding:9px 0 9px 14px;border-left:2px solid #EDE9DE;margin-bottom:6px;">
@@ -157,7 +152,7 @@ ${field("Primary Goal", pr.primaryReason)}
 ${divider()}
 <div style="background:#FAFAF8;border-radius:8px;padding:20px 24px;margin:20px 0;">
   <p style="margin:0 0 8px;font-family:${FONT};font-size:14px;font-weight:700;color:#082C6C;">What happens next?</p>
-  <p style="margin:0 0 8px;font-family:${FONT};font-size:14px;color:#374151;">Our admissions team will review your application and reach out within <strong>3–5 business days</strong>. Watch this inbox for updates on your application status.</p>
+  <p style="margin:0 0 8px;font-family:${FONT};font-size:14px;color:#374151;">We'll review your application and reach out to you shortly. Watch this inbox for updates on your application status.</p>
   <p style="margin:0;font-family:${FONT};font-size:14px;color:#374151;">In the meantime, feel free to reach us at <a href="mailto:support@dealschool.in" style="color:#0D3B8E;">support@dealschool.in</a> if you have any questions.</p>
 </div>
 ${signature("DealSchool Admissions Team")}`);
@@ -196,18 +191,6 @@ export interface AppReceivedAdminProps {
 }
 
 export function renderAppReceivedAdmin(pr: AppReceivedAdminProps): string {
-  const reason = pr.primaryReason === "Other" ? String(pr.primaryReasonOther || "Other") : pr.primaryReason;
-  const discovery = pr.discoverySource === "Other" ? String(pr.discoverySourceOther || "Other") : pr.discoverySource;
-  const hasEducation = pr.collegeName || pr.degree || pr.graduationYear || pr.degreeEducationalBackground;
-  const hasStartup = pr.startupName || pr.industrySector || pr.startupLinkedinProfile;
-  const hasFreelancer = pr.areaOfWork || pr.freelancerLinkedinProfile;
-  const hasAssessment = pr.assessmentQ1 || pr.assessmentQ2 || pr.assessmentQ3;
-
-  const statusBadgeField = `<div style="padding:9px 0 9px 14px;border-left:2px solid #EDE9DE;margin-bottom:6px;">
-    <div style="font-family:${FONT};font-size:10px;font-weight:600;color:#5F6368;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:3px;">Current Status</div>
-    <div>${badge(pr.currentStatus)}</div>
-  </div>`;
-
   return base(`
 <p style="margin:0 0 4px;font-family:${FONT};font-size:11px;color:#5F6368;text-transform:uppercase;letter-spacing:1.5px;">New Submission</p>
 <p style="margin:0 0 20px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Fellowship Application Received</p>
@@ -215,32 +198,7 @@ export function renderAppReceivedAdmin(pr: AppReceivedAdminProps): string {
 ${sectionTitle("Applicant Information")}
 ${twoCol(field("Full Name", pr.fullName), field("Email Address", pr.email))}
 ${twoCol(field("Phone Number", pr.mobileNumber), field("City", pr.city))}
-${fieldLink("LinkedIn Profile", pr.linkedinUrl)}
-
-${sectionTitle("Professional Profile")}
-${twoCol(statusBadgeField, field("Current Role", pr.currentRole))}
-${twoCol(field("Company / Organisation", pr.companyName), pr.yearsOfExperience ? field("Years of Experience", String(pr.yearsOfExperience)) : "")}
-${pr.otherStatusSpecify ? field("Other Status", pr.otherStatusSpecify) : ""}
-
-${hasEducation ? `${sectionTitle("Education")}
-${twoCol(field("College / University", pr.collegeName), field("Degree", pr.degree))}
-${twoCol(pr.graduationYear ? field("Graduation Year", String(pr.graduationYear)) : "", field("Educational Background", pr.degreeEducationalBackground))}` : ""}
-
-${hasStartup ? `${sectionTitle("Startup Details")}
-${twoCol(field("Startup Name", pr.startupName), field("Industry Sector", pr.industrySector))}
-${fieldLink("Startup LinkedIn", pr.startupLinkedinProfile)}` : ""}
-
-${hasFreelancer ? `${sectionTitle("Freelancer Details")}
-${twoCol(field("Area of Work", pr.areaOfWork), fieldLink("Freelancer LinkedIn", pr.freelancerLinkedinProfile))}` : ""}
-
-${sectionTitle("Application Details")}
-${twoCol(field("Primary Reason", reason), field("Discovery Source", discovery))}
-${fieldLink("Resume / Portfolio", pr.resumeUrl)}
-
-${hasAssessment ? `${sectionTitle("Assessment Responses")}
-${pr.assessmentQ1 ? `${qLabel("Question 1")}${answerBox(pr.assessmentQ1)}` : ""}
-${pr.assessmentQ2 ? `${qLabel("Question 2")}${answerBox(pr.assessmentQ2)}` : ""}
-${pr.assessmentQ3 ? `${qLabel("Question 3")}${answerBox(pr.assessmentQ3)}` : ""}` : ""}`);
+${fieldLink("LinkedIn Profile", pr.linkedinUrl)}`);
 }
 
 // ─── Status change emails ─────────────────────────────────────────────────────
@@ -249,7 +207,7 @@ export function renderAppUnderReview(pr: { fullName: string }): string {
   return base(`
 ${greeting(pr.fullName)}
 ${p("Your DealSchool Venture Fellowship application is now <strong style=\"color:#082C6C;\">under review</strong> by our admissions committee.")}
-${infoBanner("Our team is carefully evaluating your profile and responses. We'll be in touch within <strong>3–5 business days</strong> with the next steps.")}
+${infoBanner("Our team is carefully evaluating your profile and responses. We'll reach out to you shortly with the next steps.")}
 ${p("Thank you for your patience. We appreciate your interest in joining the DealSchool Fellowship.")}
 ${signature("DealSchool Admissions Team")}`);
 }
@@ -259,7 +217,7 @@ export function renderInterviewInvited(pr: { fullName: string }): string {
 ${greeting(pr.fullName)}
 ${p("Congratulations! After reviewing your application, we are pleased to invite you to <strong style=\"color:#082C6C;\">interview for the DealSchool Venture Fellowship</strong>.")}
 ${infoBanner("Our admissions team will reach out to you shortly with interview scheduling details. Please keep this inbox and your phone accessible.")}
-${p("This is an exciting step — we look forward to learning more about you and your goals.")}
+${p("This is an exciting step, and we look forward to learning more about you and your goals.")}
 ${signature("DealSchool Admissions Team")}`);
 }
 
@@ -267,7 +225,7 @@ export function renderAppDeclined(pr: { fullName: string }): string {
   return base(`
 ${greeting(pr.fullName)}
 ${p("Thank you for your interest in the DealSchool Venture Fellowship and for the time you invested in your application.")}
-${p("After careful deliberation, we regret to inform you that we are unable to move forward with your application for this cohort. This decision reflects the highly competitive nature of our programme — not a measure of your potential or merit.")}
+${p("After careful deliberation, we regret to inform you that we are unable to move forward with your application for this cohort. This decision reflects the highly competitive nature of our programme, not a measure of your potential or merit.")}
 ${infoBanner("We receive a large number of applications for a limited number of seats, and many strong candidates are not selected in any given cohort.")}
 ${p("We encourage you to apply again for our next cohort. In the meantime, follow us on LinkedIn for updates, resources, and fellowship announcements.")}
 ${signature("DealSchool Admissions Team")}`);
@@ -282,13 +240,12 @@ export function renderPaymentLinkEmail(pr: {
 }): string {
   return base(`
 ${greeting(pr.fullName)}
-${p("Congratulations — you've been <strong style=\"color:#082C6C;\">accepted to the DealSchool Venture Fellowship!</strong> We're thrilled to have you join this cohort.")}
+${p("Congratulations, you've been <strong style=\"color:#082C6C;\">accepted to the DealSchool Venture Fellowship!</strong> We're thrilled to have you join this cohort.")}
 ${infoBanner(`To confirm and secure your seat, please complete the fellowship fee payment of <strong>${esc(pr.feeDisplay)}</strong> using the secure link below.`)}
 ${sectionTitle("Payment Details")}
 ${field("Fellowship Fee", pr.feeDisplay)}
-${field("Link Validity", "30 minutes from time of issue")}
 <p style="margin:20px 0 8px;">${btn(pr.linkUrl, "Complete Payment &rarr;")}</p>
-<p style="margin:0;font-family:${FONT};font-size:13px;color:#5F6368;">If this link has expired, please contact us at <a href="mailto:support@dealschool.in" style="color:#0D3B8E;">support@dealschool.in</a> and we'll issue a fresh one promptly.</p>
+<p style="margin:0;font-family:${FONT};font-size:13px;color:#5F6368;">If you have any trouble completing your payment, please contact us at <a href="mailto:support@dealschool.in" style="color:#0D3B8E;">support@dealschool.in</a> and we'll be happy to help.</p>
 ${signature("DealSchool Team")}`);
 }
 
@@ -301,7 +258,7 @@ export function renderPaymentReceiptEmail(pr: {
 }): string {
   return base(`
 ${greeting(pr.applicantName)}
-${p("Your payment has been <strong style=\"color:#082C6C;\">confirmed</strong>. Welcome to the DealSchool Venture Fellowship — we're delighted to have you on board!")}
+${p("Your payment has been <strong style=\"color:#082C6C;\">confirmed</strong>. Welcome to the DealSchool Venture Fellowship. We're delighted to have you on board!")}
 ${sectionTitle("Payment Confirmation")}
 ${field("Amount Paid", pr.feeDisplay)}
 ${field("Transaction ID", pr.rzpPaymentId)}
@@ -410,7 +367,7 @@ ${p("A password reset was requested for the DealSchool Admin Portal. Click the b
 ${infoBanner("This reset link is valid for <strong>30 minutes</strong> from the time it was issued.")}
 <p style="margin:20px 0 8px;">${btn(pr.resetLink, "Reset Password &rarr;")}</p>
 ${divider()}
-<p style="margin:0;font-family:${FONT};font-size:13px;color:#5F6368;">If you did not request a password reset, you can safely ignore this email — your password will remain unchanged.</p>`);
+<p style="margin:0;font-family:${FONT};font-size:13px;color:#5F6368;">If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>`);
 }
 
 // ─── Admin OTP — change password ──────────────────────────────────────────────

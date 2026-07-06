@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     await sendEmail({
       from:    ADMIN_SENDER,
       to:      admin.email,
-      subject: "DealSchool Admin Portal — Change Password OTP",
+      subject: "DealSchool Admin Portal: Change Password OTP",
       html:    renderAdminOTP({ otpCode }),
     });
     logInfo("api/auth/request-otp", "OTP email sent OK", { adminEmail: admin.email });

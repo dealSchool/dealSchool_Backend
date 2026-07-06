@@ -166,7 +166,7 @@ export async function PATCH(
     sendEmail({
       from:    CANDIDATE_SENDER,
       to:      String(prevData.email),
-      subject: "Your DealSchool Fellowship Offer — Action Required",
+      subject: "Your DealSchool Fellowship Offer: Action Required",
       html:    renderPaymentLinkEmail({
         fullName:   String(prevData.fullName || ""),
         linkUrl:    link.linkUrl,
@@ -196,11 +196,11 @@ export async function PATCH(
         html:    renderAppUnderReview({ fullName: String(prevData.fullName || "Applicant") }),
       },
       interview_invited: {
-        subject: "You've Been Invited to Interview — DealSchool Fellowship",
+        subject: "You've Been Invited to Interview for the DealSchool Fellowship",
         html:    renderInterviewInvited({ fullName: String(prevData.fullName || "Applicant") }),
       },
       declined: {
-        subject: "DealSchool Fellowship Application — Update",
+        subject: "An Update on Your DealSchool Fellowship Application",
         html:    renderAppDeclined({ fullName: String(prevData.fullName || "Applicant") }),
       },
     };

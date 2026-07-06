@@ -268,7 +268,7 @@ export async function POST(
   sendEmail({
     from:    CANDIDATE_SENDER,
     to:      ADMIN_EMAIL,
-    subject: `[Refund Initiated] ${String(appData.fullName || "Fellow")} — ${refundDisplay} (${refundPercent}%)`,
+    subject: `[Refund Initiated] ${String(appData.fullName || "Fellow")}: ${refundDisplay} (${refundPercent}%)`,
     html:    renderRefundAdminNotification({
       applicantName:  String(appData.fullName || "Fellow"),
       applicantEmail: String(appData.email || ""),

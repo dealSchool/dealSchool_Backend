@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
   sendEmail({
     from:    CANDIDATE_SENDER,
     to:      String(data.email),
-    subject: "Resume Received | DealSchool Fellowship Underwriting",
+    subject: "Application Received",
     html:    renderAppReceivedCandidate({
       fullName:        String(data.fullName     || ""),
       currentStatus:   String(data.currentStatus || ""),

@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     await sendEmail({
       from:    ADMIN_SENDER,
       to:      String(email),
-      subject: "DealSchool Admin Portal — Password Reset",
+      subject: "DealSchool Admin Portal: Password Reset",
       html:    renderAdminPasswordReset({ resetLink }),
     });
     logInfo("api/auth/forgot-password", "Password reset email sent OK", { email: String(email) });

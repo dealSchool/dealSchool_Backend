@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
     sendEmail({
       from:    CONTACT_SENDER,
       to:      safeEmail,
-      subject: "We received your message — DealSchool",
+      subject: "We Received Your Message | DealSchool",
       html:    renderContactInquiryCandidate({ name: safeName, subject: safeSubject, message: safeMessage }),
     }).catch((err) => logError("api/contacts", `Sender confirmation email FAILED contactId=${docRef.id} senderEmail=${safeEmail}`, err));
 

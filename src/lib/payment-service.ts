@@ -25,7 +25,6 @@ export async function createRazorpayPaymentLink(
 ): Promise<PaymentLinkData> {
   const { feePaise } = await getCohortSettings();
   const appBaseUrl   = (process.env.APP_BASE_URL || "http://localhost:3000/").replace(/\/$/, "/");
-  const expiryUnix = Math.floor(Date.now() / 1000) + 1800;
 
   const rzp         = getRazorpay();
   const paymentLink = await rzp.paymentLink.create({
@@ -33,7 +32,6 @@ export async function createRazorpayPaymentLink(
     currency:     "INR",
     description:  "DealSchool Fellowship Program Fee",
     reference_id: `${applicationId}_${Date.now()}`,
-    expire_by:    expiryUnix,
     customer: {
       name:  String(appData.fullName  || ""),
       email: String(appData.email     || ""),
@@ -139,7 +137,7 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
     await sendEmail({
       from:    CANDIDATE_SENDER,
       to:      recipientEmail,
-      subject: "Your DealSchool Fellowship Offer — Action Required",
+      subject: "Your DealSchool Fellowship Offer: Action Required",
       html:    renderPaymentLinkEmail({ fullName: String(appData.fullName || ""), linkUrl, feeDisplay }),
     });
     logInfo("payment-service", "Payment link email sent OK", { applicationId, recipientEmail });

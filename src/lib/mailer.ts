@@ -29,16 +29,18 @@ export async function sendEmail({
   to,
   subject,
   html,
+  attachments,
 }: {
   from: string;
   to: string;
   subject: string;
   html: string;
+  attachments?: { filename: string; content: Buffer }[];
 }) {
   logInfo("mailer", "Attempting to send email", { to, subject });
 
   try {
-    const { data, error } = await getResend().emails.send({ from, to, subject, html });
+    const { data, error } = await getResend().emails.send({ from, to, subject, html, ...(attachments ? { attachments } : {}) });
 
     if (error) {
       throw new Error(error.message);

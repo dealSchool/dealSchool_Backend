@@ -10,6 +10,7 @@ import {
   renderRefundAdminNotification,
 } from "@/lib/email-templates";
 import { sendEmail } from "@/lib/mailer";
+import { getNextInvoiceNumber, generateInvoicePdf } from "@/lib/invoice";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -179,16 +180,49 @@ export async function POST(request: NextRequest) {
     if (!appData?.email) {
       logWarn("api/webhooks/razorpay", "Applicant has no email address — payment receipt skipped", { applicationId });
     } else {
+      // Invoice PDF attachment — non-fatal, the receipt still sends without it if generation fails.
+      let invoiceAttachment: { filename: string; content: Buffer }[] | undefined;
+      try {
+        const paymentMethod = String(paymentEntity.method || "N/A");
+        const paymentDate   = paymentEntity.created_at ? new Date(paymentEntity.created_at * 1000) : new Date();
+        const invoiceNumber = await getNextInvoiceNumber(paymentDate);
+        const pdf = await generateInvoicePdf({
+          invoiceNumber,
+          applicantName:  String(appData.fullName || "Fellow"),
+          applicantEmail: String(appData.email),
+          amountDisplay:  feeDisplay,
+          paymentDate,
+          paymentMethod,
+          rzpPaymentId,
+        });
+        invoiceAttachment = [{ filename: `${invoiceNumber}.pdf`, content: pdf }];
+
+        // Persist so the invoice number is queryable later (dashboard, support,
+        // accounting) instead of only existing inside the one email it was sent in.
+        const invoiceRecord = {
+          invoiceNumber,
+          invoicePaymentMethod: paymentMethod,
+          invoiceGeneratedAt: FieldValue.serverTimestamp(),
+        };
+        Promise.all([
+          appRef.set(invoiceRecord, { merge: true }),
+          paymentRef.set(invoiceRecord, { merge: true }),
+        ]).catch((err) => logError("api/webhooks/razorpay", `Invoice record persistence FAILED applicationId=${applicationId} invoiceNumber=${invoiceNumber}`, err));
+      } catch (err: unknown) {
+        logError("api/webhooks/razorpay", `Invoice generation FAILED applicationId=${applicationId}`, err);
+      }
+
       logInfo("api/webhooks/razorpay", "Sending payment receipt email", { applicationId, applicantEmail: appData.email });
       sendEmail({
         from:    CANDIDATE_SENDER,
         to:      String(appData.email),
-        subject: "Payment Confirmed — Welcome to DealSchool!",
+        subject: "Payment Confirmed: Welcome to DealSchool!",
         html:    renderPaymentReceiptEmail({
           applicantName: String(appData.fullName || "Fellow"),
           feeDisplay,
           rzpPaymentId,
         }),
+        attachments: invoiceAttachment,
       })
         .then(() => logInfo("api/webhooks/razorpay", "Payment receipt email sent OK", { applicationId, applicantEmail: appData.email }))
         .catch((err) => logError("api/webhooks/razorpay", `Payment receipt email FAILED applicationId=${applicationId} applicantEmail=${appData.email}`, err));
@@ -197,7 +231,7 @@ export async function POST(request: NextRequest) {
       sendEmail({
         from:    CANDIDATE_SENDER,
         to:      adminEmail,
-        subject: `[Payment Confirmed] ${String(appData.fullName || "Fellow")} — ${feeDisplay}`,
+        subject: `[Payment Confirmed] ${String(appData.fullName || "Fellow")}: ${feeDisplay}`,
         html:    renderPaymentReceiptAdminEmail({
           applicantName:  String(appData.fullName || "Fellow"),
           applicantEmail: String(appData.email),
@@ -327,7 +361,7 @@ export async function POST(request: NextRequest) {
     sendEmail({
       from:    CANDIDATE_SENDER,
       to:      adminEmail,
-      subject: `[Refund ${isProcessed ? "Completed" : "FAILED"}] ${String(appData?.fullName || "Fellow")} — ${refundDisplay}`,
+      subject: `[Refund ${isProcessed ? "Completed" : "FAILED"}] ${String(appData?.fullName || "Fellow")}: ${refundDisplay}`,
       html:    renderRefundAdminNotification({
         applicantName:  String(appData?.fullName || "Fellow"),
         applicantEmail: String(appData?.email || ""),
