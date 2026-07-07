@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 const FIREBASE_SIGN_IN_URL =
   "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword";
 
-// POST /api/auth/login — exchange email+password for a Firebase ID token
+// POST /auth/login — exchange email+password for a Firebase ID token
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
   const headers = corsHeaders(origin);

@@ -20,7 +20,7 @@ const ADMIN_SENDER     = "DealSchool <support@dealschool.in>";
 
 const PAGE_SIZE = 50;
 
-// ─── GET /api/applications — admin: paginated list ────────────────────────────
+// ─── GET /applications — admin: paginated list ────────────────────────────────
 // Query params: ?limit=50&after=<docId>
 // First page response also includes aggregate counts so the dashboard metrics
 // stay accurate without a separate API call.
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ applications, hasMore, nextCursor, counts }, { headers });
 }
 
-// ─── POST /api/applications — public: submit new application ─────────────────
+// ─── POST /applications — public: submit new application ─────────────────────
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);

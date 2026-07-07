@@ -7,7 +7,7 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
-// ─── POST /api/auth/change-password — admin: verify OTP then update password ──
+// ─── POST /auth/change-password — admin: verify OTP then update password ──────
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);

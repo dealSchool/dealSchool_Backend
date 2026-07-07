@@ -14,7 +14,7 @@ function first(v: string | string[] | undefined): string | undefined {
 
 // Verifies the Razorpay Payment Link redirect per their documented scheme —
 // https://razorpay.com/docs/payment-links/verify-status/#via-redirect-to-site
-// This is display-only: the webhook (src/app/api/webhooks/razorpay/route.ts)
+// This is display-only: the webhook (src/app/webhooks/razorpay/route.ts)
 // remains the sole source of truth for actually marking a payment "paid".
 function verifyCallbackSignature(params: {
   paymentLinkId: string;

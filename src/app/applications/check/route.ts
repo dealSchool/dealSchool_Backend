@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 const ALREADY_APPLIED_MSG =
   "You've already applied to DealSchool. Our team will reach out to you shortly. For any queries, contact support@dealschool.in";
 
-// POST /api/applications/check
+// POST /applications/check
 // Public — call on email/phone field blur to show early feedback.
 // Body: { email?: string, phone?: string }  (at least one required)
 // Response: { alreadyApplied: boolean, message?: string }

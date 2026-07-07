@@ -15,7 +15,7 @@ function serializeCohort(startDate: Date, feePaise: number) {
   };
 }
 
-// ─── GET /api/settings/cohort — admin: read cohort start date + fee ───────────
+// ─── GET /settings/cohort — admin: read cohort start date + fee ───────────────
 export async function GET(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   );
 }
 
-// ─── PATCH /api/settings/cohort — admin: set cohort start date and/or fee ─────
+// ─── PATCH /settings/cohort — admin: set cohort start date and/or fee ─────────
 // Both are optional per-call — send only what you want to change. The start
 // date drives cancellation refund tiers (see src/lib/refund-service.ts); the
 // fee is charged on every NEW payment link created after this call (existing

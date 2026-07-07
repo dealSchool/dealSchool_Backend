@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 
 const ADMIN_SENDER = "DealSchool Admin <support@dealschool.in>";
 
-// ─── POST /api/auth/forgot-password — public ─────────────────────────────────
+// ─── POST /auth/forgot-password — public ──────────────────────────────────────
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);

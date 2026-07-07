@@ -37,5 +37,12 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: "/api/:path*",
+  matcher: [
+    "/applications/:path*",
+    "/auth/:path*",
+    "/contacts/:path*",
+    "/payment/:path*",
+    "/settings/:path*",
+    "/webhooks/:path*",
+  ],
 };

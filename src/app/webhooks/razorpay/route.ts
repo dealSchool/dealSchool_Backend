@@ -266,14 +266,14 @@ export async function POST(request: NextRequest) {
     logInfo("api/webhooks/razorpay", "Payment link marked expired in Firestore", { applicationId });
 
   // ─── refund.processed / refund.failed ────────────────────────────────────────
-  // Fired asynchronously after /api/applications/[id]/cancel initiates a refund
+  // Fired asynchronously after /applications/[id]/cancel initiates a refund
   // (Razorpay "normal" speed refunds settle in 5-7 business days).
   } else if (eventType === "refund.processed" || eventType === "refund.failed") {
     const refundEntity = event.payload?.refund?.entity;
     if (!refundEntity) return new Response("OK", { status: 200 });
 
     // We set notes.applicationId ourselves when creating the refund — see
-    // src/app/api/applications/[id]/cancel/route.ts.
+    // src/app/applications/[id]/cancel/route.ts.
     const applicationId: string = refundEntity.notes?.applicationId || "";
     if (!applicationId) {
       logWarn("api/webhooks/razorpay", "Cannot resolve applicationId from refund webhook — skipping", { rzpRefundId: refundEntity.id });

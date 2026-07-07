@@ -30,7 +30,7 @@ const PAYMENT_PROTECTED = new Set([
   "paymentLinkSentAt",
 ]);
 
-// ─── PATCH /api/applications/[id] — admin: update status ─────────────────────
+// ─── PATCH /applications/[id] — admin: update status ──────────────────────────
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -67,12 +67,12 @@ export async function PATCH(
   logInfo("api/applications/[id]", "Status change requested", { id, prevStatus, newStatus, applicantEmail: prevData.email ?? "none" });
 
   // "cancelled" carries refund-policy side effects (Razorpay refund, refund
-  // emails) that only POST /api/applications/[id]/cancel knows how to run —
+  // emails) that only POST /applications/[id]/cancel knows how to run —
   // block it here so it can never be set as a bare status flip.
   if (newStatus === "cancelled") {
     logWarn("api/applications/[id]", "Rejected direct status=cancelled PATCH — use /cancel endpoint", { id });
     return NextResponse.json(
-      { error: "Use POST /api/applications/[id]/cancel to cancel an application — it also processes any refund owed." },
+      { error: "Use POST /applications/[id]/cancel to cancel an application — it also processes any refund owed." },
       { status: 400, headers },
     );
   }
@@ -227,7 +227,7 @@ export async function PATCH(
   );
 }
 
-// ─── DELETE /api/applications/[id] — admin: delete ───────────────────────────
+// ─── DELETE /applications/[id] — admin: delete ────────────────────────────────
 // If the applicant has already paid, the endpoint returns 409 with
 // { requiresConfirmation: true } so the frontend can show a warning modal.
 // Re-call with ?confirmed=true to force-delete after the admin confirms.
@@ -285,7 +285,7 @@ export async function DELETE(
           : `${String(appData.fullName || "This applicant")} has already paid the fellowship fee of ` +
             `${feeDisplay}. Deleting this record will not trigger a refund. ` +
             `You must process the refund manually via the Razorpay dashboard, or use ` +
-            `POST /api/applications/${id}/cancel instead of deleting.`,
+            `POST /applications/${id}/cancel instead of deleting.`,
       },
       { status: 409, headers }
     );

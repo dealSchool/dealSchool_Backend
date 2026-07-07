@@ -16,7 +16,7 @@ const CONTACT_SENDER = "DealSchool HelpDesk <support@dealschool.in>";
 
 const PAGE_SIZE = 50;
 
-// ─── GET /api/contacts — admin: paginated list ────────────────────────────────
+// ─── GET /contacts — admin: paginated list ────────────────────────────────────
 // Query params: ?limit=50&after=<docId>
 // First page response also includes aggregate counts for the dashboard metrics.
 export async function GET(request: NextRequest) {
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ contacts, hasMore, nextCursor, counts }, { headers });
 }
 
-// ─── POST /api/contacts — public: submit contact inquiry + send emails ────────
+// ─── POST /contacts — public: submit contact inquiry + send emails ────────────
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);

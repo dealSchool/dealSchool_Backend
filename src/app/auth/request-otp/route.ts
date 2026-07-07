@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 
 const ADMIN_SENDER = "DealSchool Admin <support@dealschool.in>";
 
-// ─── POST /api/auth/request-otp — admin: generate & email OTP for password change
+// ─── POST /auth/request-otp — admin: generate & email OTP for password change ─
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);

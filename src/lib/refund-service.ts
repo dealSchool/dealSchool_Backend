@@ -4,7 +4,7 @@
 //   On/after cohort start         -> no refund
 //
 // The cohort start date itself lives in src/lib/cohort-settings.ts
-// (admin-configurable via PATCH /api/settings/cohort).
+// (admin-configurable via PATCH /settings/cohort).
 
 export interface RefundTier {
   percent: number; // 100 | 50 | 0

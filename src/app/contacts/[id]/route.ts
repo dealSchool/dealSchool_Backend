@@ -8,7 +8,7 @@ import { logInfo, logWarn } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
-// ─── PATCH /api/contacts/[id] — admin: update status / notes ─────────────────
+// ─── PATCH /contacts/[id] — admin: update status / notes ─────────────────────
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -58,7 +58,7 @@ export async function PATCH(
   );
 }
 
-// ─── DELETE /api/contacts/[id] — admin: delete ───────────────────────────────
+// ─── DELETE /contacts/[id] — admin: delete ────────────────────────────────────
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

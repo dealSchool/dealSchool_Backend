@@ -30,7 +30,7 @@ const REFUND_TERMINAL_STATUSES = new Set(["refund_pending", "refunded"]);
 // "paid" for a first attempt, "refund_failed" for a retry after a prior failure.
 const REFUNDABLE_PAYMENT_STATUSES = new Set(["paid", "refund_failed"]);
 
-// ─── POST /api/applications/[id]/cancel — admin: cancel + auto-refund per policy ──
+// ─── POST /applications/[id]/cancel — admin: cancel + auto-refund per policy ──
 // Policy (Cancellation by the Fellow): 5+ days before cohort start -> 100%,
 // 1-4 days before -> 50%, on/after cohort start -> no refund.
 export async function POST(

@@ -3,7 +3,7 @@ import { adminDb } from "./firebase-admin";
 
 // Singleton doc — one active cohort (start date + fee) at a time, matching the
 // rest of the codebase's single-cohort design. Falls back to env vars / hardcoded
-// defaults until an admin explicitly sets values via PATCH /api/settings/cohort.
+// defaults until an admin explicitly sets values via PATCH /settings/cohort.
 export const DEFAULT_COHORT_START_DATE = "2026-08-01";
 const DEFAULT_FEE_PAISE = parseInt(process.env.FELLOWSHIP_FEE || "1000", 10) * 100;
 
