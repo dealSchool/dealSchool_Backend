@@ -1,27 +1,33 @@
-import { Resend } from "resend";
+import nodemailer, { type Transporter } from "nodemailer";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 
-// WHY Resend instead of nodemailer+SMTP:
-// Google blocks TCP connections on port 587 from cloud-hosting IP ranges (Render, AWS, etc.)
-// as an anti-spam measure — ETIMEDOUT after 2 min, no code fix possible.
-// Resend sends via HTTPS (port 443), never blocked, relays through IPs Google trusts.
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT ?? 465);
+const SMTP_SECURE = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === "true" : SMTP_PORT === 465;
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
 
-if (!process.env.RESEND_API_KEY) {
-  logWarn("mailer", "RESEND_API_KEY not set — ALL emails will fail", {
-    fix: "1. Sign up at resend.com  2. Verify dealschool.in domain  3. Create API key  4. Add RESEND_API_KEY in Render → Environment",
+if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+  logWarn("mailer", "SMTP_HOST/SMTP_USER/SMTP_PASS not set — ALL emails will fail", {
+    fix: "Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS in the environment",
   });
 }
 
-// Lazy init — avoids throwing at module load when RESEND_API_KEY is absent (e.g. CI/build)
-let _resend: Resend | null = null;
-function getResend(): Resend {
-  if (!_resend) {
-    if (!process.env.RESEND_API_KEY) {
-      throw new Error("RESEND_API_KEY is not set. Add it in Render → Environment.");
+// Lazy init — avoids throwing at module load when SMTP env vars are absent (e.g. CI/build)
+let _transporter: Transporter | null = null;
+function getTransporter(): Transporter {
+  if (!_transporter) {
+    if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+      throw new Error("SMTP_HOST, SMTP_USER, and SMTP_PASS must be set to send email.");
     }
-    _resend = new Resend(process.env.RESEND_API_KEY);
+    _transporter = nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: { user: SMTP_USER, pass: SMTP_PASS },
+    });
   }
-  return _resend;
+  return _transporter;
 }
 
 export async function sendEmail({
@@ -40,14 +46,10 @@ export async function sendEmail({
   logInfo("mailer", "Attempting to send email", { to, subject });
 
   try {
-    const { data, error } = await getResend().emails.send({ from, to, subject, html, ...(attachments ? { attachments } : {}) });
+    const info = await getTransporter().sendMail({ from, to, subject, html, ...(attachments ? { attachments } : {}) });
 
-    if (error) {
-      throw new Error(error.message);
-    }
-
-    logInfo("mailer", "Email sent successfully", { to, subject, id: data?.id });
-    return data;
+    logInfo("mailer", "Email sent successfully", { to, subject, id: info.messageId });
+    return info;
   } catch (err: unknown) {
     logError("mailer", `Email send FAILED to="${to}" subject="${subject}"`, err);
     throw err;
