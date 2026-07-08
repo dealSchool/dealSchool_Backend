@@ -251,17 +251,33 @@ ${signature("DealSchool Team")}`);
 
 // ─── Payment receipt ──────────────────────────────────────────────────────────
 
-export function renderPaymentReceiptEmail(pr: {
+export interface PaymentReceiptEmailProps {
   applicantName: string;
   feeDisplay: string;
   rzpPaymentId: string;
-}): string {
+  paymentMethod?: string;
+  paidOnDisplay?: string;
+  applicantEmail?: string;
+  mobileNumber?: string;
+}
+
+export function renderPaymentReceiptEmail(pr: PaymentReceiptEmailProps): string {
   return base(`
 ${greeting(pr.applicantName)}
 ${p("Your payment has been <strong style=\"color:#082C6C;\">confirmed</strong>. Welcome to the DealSchool Venture Fellowship. We're delighted to have you on board!")}
-${sectionTitle("Payment Confirmation")}
-${field("Amount Paid", pr.feeDisplay)}
-${field("Transaction ID", pr.rzpPaymentId)}
+<div style="text-align:center;margin:28px 0 24px;">
+  <div style="width:56px;height:56px;line-height:56px;border-radius:50%;background:#1E8E3E;color:#ffffff;font-size:28px;font-weight:700;margin:0 auto 16px;">&#10003;</div>
+  <p style="margin:0;font-family:${SERIF};font-size:34px;font-weight:700;color:#082C6C;">${esc(pr.feeDisplay)}</p>
+  <p style="margin:6px 0 0;font-family:${FONT};font-size:12px;font-weight:700;color:#1E8E3E;text-transform:uppercase;letter-spacing:2px;">Paid Successfully</p>
+</div>
+${divider()}
+${sectionTitle("Payment Details")}
+${field("Payment ID", pr.rzpPaymentId)}
+${field("Method", pr.paymentMethod)}
+${field("Paid On", pr.paidOnDisplay)}
+${field("Email", pr.applicantEmail)}
+${field("Mobile Number", pr.mobileNumber)}
+${divider()}
 ${infoBanner("Our team will be in touch very soon with onboarding details, your cohort schedule, and everything you need to get started.")}
 <p style="margin:24px 0 0;font-family:${FONT};font-size:15px;color:#111111;">We're excited for what's ahead,<br /><strong>DealSchool Team</strong></p>`);
 }

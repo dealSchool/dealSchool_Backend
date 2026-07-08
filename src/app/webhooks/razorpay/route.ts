@@ -180,11 +180,17 @@ export async function POST(request: NextRequest) {
     if (!appData?.email) {
       logWarn("api/webhooks/razorpay", "Applicant has no email address — payment receipt skipped", { applicationId });
     } else {
+      const paymentMethod = String(paymentEntity.method || "N/A").toUpperCase();
+      const paymentDate   = paymentEntity.created_at ? new Date(paymentEntity.created_at * 1000) : new Date();
+      const paidOnDisplay = paymentDate.toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true,
+        timeZone: "Asia/Kolkata",
+      }) + " IST";
+
       // Invoice PDF attachment — non-fatal, the receipt still sends without it if generation fails.
       let invoiceAttachment: { filename: string; content: Buffer }[] | undefined;
       try {
-        const paymentMethod = String(paymentEntity.method || "N/A");
-        const paymentDate   = paymentEntity.created_at ? new Date(paymentEntity.created_at * 1000) : new Date();
         const invoiceNumber = await getNextInvoiceNumber(paymentDate);
         const pdf = await generateInvoicePdf({
           invoiceNumber,
@@ -221,6 +227,10 @@ export async function POST(request: NextRequest) {
           applicantName: String(appData.fullName || "Fellow"),
           feeDisplay,
           rzpPaymentId,
+          paymentMethod,
+          paidOnDisplay,
+          applicantEmail: String(appData.email),
+          mobileNumber: appData.mobileNumber ? String(appData.mobileNumber) : undefined,
         }),
         attachments: invoiceAttachment,
       })

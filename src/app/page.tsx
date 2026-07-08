@@ -72,7 +72,7 @@ export default async function Home({
     message = "This link's signature didn't check out, so we can't confirm your payment status here. Please check your email for a confirmation, or contact support@dealschool.in.";
   } else if (isPaid) {
     heading = "Payment Successful";
-    message = "Thank you — your DealSchool Fellowship fee has been received. A confirmation email is on its way to your inbox.";
+    message = "Thank you — your DealSchool Fellowship fee has been received. You can close this tab now; a confirmation email with your receipt is on its way to your inbox.";
   } else {
     heading = "Payment Not Completed";
     message = `Your payment status is "${status}". If this seems wrong, please contact support@dealschool.in.`;
@@ -157,22 +157,24 @@ export default async function Home({
             </div>
           )}
 
-          <a
-            href={FRONTEND_URL}
-            style={{
-              display: "inline-block",
-              padding: "12px 28px",
-              background: "#082C6C",
-              color: "#ffffff",
-              borderRadius: 6,
-              fontSize: 14,
-              fontWeight: 600,
-              textDecoration: "none",
-              letterSpacing: 0.5,
-            }}
-          >
-            Return to DealSchool &rarr;
-          </a>
+          {!isPaid && (
+            <a
+              href={FRONTEND_URL}
+              style={{
+                display: "inline-block",
+                padding: "12px 28px",
+                background: "#082C6C",
+                color: "#ffffff",
+                borderRadius: 6,
+                fontSize: 14,
+                fontWeight: 600,
+                textDecoration: "none",
+                letterSpacing: 0.5,
+              }}
+            >
+              Return to DealSchool &rarr;
+            </a>
+          )}
         </div>
       </div>
     </main>
