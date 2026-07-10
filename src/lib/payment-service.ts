@@ -37,6 +37,7 @@ export async function createCashfreePaymentLink(
     },
     notes:     { applicationId, source: "dealschool-auto" },
     returnUrl: `${appBaseUrl}?aid=${applicationId}`,
+    notifyUrl: `${appBaseUrl}webhooks/cashfree`,
   });
 
   return {

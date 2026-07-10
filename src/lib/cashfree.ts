@@ -33,6 +33,7 @@ export interface CreatePaymentLinkParams {
   customer:    { name?: string; email?: string; phone: string };
   notes?:      Record<string, string>;
   returnUrl:   string;
+  notifyUrl:   string;
 }
 
 export interface PaymentLinkResult {
@@ -60,7 +61,11 @@ export async function createPaymentLink(params: CreatePaymentLinkParams): Promis
       },
       link_notify: { send_sms: false, send_email: false },
       ...(params.notes ? { link_notes: params.notes } : {}),
-      link_meta: { return_url: params.returnUrl },
+      // Payment Link webhooks (PAYMENT_LINK_EVENT) are delivered to this
+      // per-link notify_url, NOT via the merchant dashboard's general
+      // Webhooks config — that screen only covers order/payment/refund
+      // events. Without this, "paid" notifications never arrive.
+      link_meta: { return_url: params.returnUrl, notify_url: params.notifyUrl },
     }),
   });
 
