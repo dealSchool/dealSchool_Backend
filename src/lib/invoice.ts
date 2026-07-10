@@ -33,7 +33,7 @@ export interface InvoiceData {
   amountDisplay: string;
   paymentDate: Date;
   paymentMethod: string;
-  rzpPaymentId: string;
+  paymentId: string;
 }
 
 export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
@@ -108,7 +108,7 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
       .fillColor(GREY)
       .font("Helvetica")
       .fontSize(10)
-      .text(`Payment ID: ${data.rzpPaymentId}`, 50, payTop + 20)
+      .text(`Payment ID: ${data.paymentId}`, 50, payTop + 20)
       .text(`Payment Method: ${data.paymentMethod}`, 50, payTop + 36)
       .text("Status: Paid", 50, payTop + 52);
 

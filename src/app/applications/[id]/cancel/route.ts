@@ -4,7 +4,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
-import { getRazorpay } from "@/lib/razorpay";
+import { cancelPaymentLink, createRefund } from "@/lib/cashfree";
 import { getCohortSettings } from "@/lib/cohort-settings";
 import { computeRefundTier } from "@/lib/refund-service";
 import { sendEmail } from "@/lib/mailer";
@@ -85,10 +85,10 @@ export async function POST(
       );
     }
 
-    const linkId = appData.rzpPaymentLinkId || paymentData?.rzpPaymentLinkId;
+    const linkId = appData.paymentLinkId || paymentData?.paymentLinkId;
     if (linkId) {
       // Best-effort — an already-paid/expired/cancelled link errors harmlessly.
-      getRazorpay().paymentLink.cancel(linkId).catch(() => {});
+      cancelPaymentLink(linkId).catch(() => {});
     }
 
     // Re-check status atomically so two concurrent calls can't both "succeed".
@@ -175,16 +175,16 @@ export async function POST(
   }
 
   // ── 50% / 100% tier ──────────────────────────────────────────────────────────
-  const rzpPaymentId = paymentData!.rzpPaymentId as string | undefined;
-  if (!rzpPaymentId) {
-    logError("api/applications/[id]/cancel", `Payment marked paid but rzpPaymentId is missing id=${id}`);
+  const paymentOrderId = paymentData!.paymentOrderId as string | undefined;
+  if (!paymentOrderId) {
+    logError("api/applications/[id]/cancel", `Payment marked paid but paymentOrderId is missing id=${id}`);
     return NextResponse.json(
-      { error: "Cannot locate the Razorpay payment for this application" },
+      { error: "Cannot locate the Cashfree order for this application" },
       { status: 500, headers },
     );
   }
 
-  // Acquire an atomic lock BEFORE calling Razorpay — a Firestore transaction can
+  // Acquire an atomic lock BEFORE calling Cashfree — a Firestore transaction can
   // be retried internally, so an external, non-idempotent side effect (the
   // refund call) must never live inside one. Locking first, outside any
   // transaction retry, is what actually prevents two concurrent requests from
@@ -209,24 +209,29 @@ export async function POST(
     );
   }
 
-  let refund;
+  // Cashfree's refund_id is merchant-generated (must be unique, alphanumeric,
+  // 3-40 chars) — the webhook looks applicationId back up by this value, so
+  // it must be written to the payments doc before/with the refund call.
+  const refundId = `rf${id}${Date.now()}`.slice(0, 40);
+
   try {
-    refund = await getRazorpay().payments.refund(rzpPaymentId, {
-      amount: refundAmountPaise,
-      speed:  "normal",
-      notes:  { applicationId: id, reason: "cancellation", refundPercent: String(refundPercent) },
+    await createRefund({
+      orderId:     paymentOrderId,
+      refundId,
+      amountPaise: refundAmountPaise,
+      note:        "cancellation",
     });
   } catch (err: any) {
-    logError("api/applications/[id]/cancel", `Razorpay refund FAILED id=${id} rzpPaymentId=${rzpPaymentId}`, err);
+    logError("api/applications/[id]/cancel", `Cashfree refund FAILED id=${id} paymentOrderId=${paymentOrderId}`, err);
     // Release the lock so this can be retried — restore the pre-lock status.
     await paymentRef.update({ status: paymentStatus, updatedAt: FieldValue.serverTimestamp() }).catch(() => {});
     return NextResponse.json(
-      { error: "Failed to initiate refund with Razorpay. Application status was not changed." },
+      { error: "Failed to initiate refund with Cashfree. Application status was not changed." },
       { status: 502, headers },
     );
   }
 
-  // ── Finalize now that Razorpay has accepted the refund and the lock is ours ──
+  // ── Finalize now that Cashfree has accepted the refund and the lock is ours ──
   await adminDb.runTransaction(async (t) => {
     t.update(appRef, {
       status:             "cancelled",
@@ -238,7 +243,7 @@ export async function POST(
     });
     t.update(paymentRef, {
       status:            "refund_pending",
-      rzpRefundId:       refund.id,
+      refundId,
       refundAmount:      refundAmountPaise,
       refundPercent,
       refundInitiatedAt: FieldValue.serverTimestamp(),
@@ -246,8 +251,8 @@ export async function POST(
     });
   });
 
-  logInfo("api/applications/[id]/cancel", "Refund initiated with Razorpay", {
-    id, rzpRefundId: refund.id, refundAmountPaise: String(refundAmountPaise),
+  logInfo("api/applications/[id]/cancel", "Refund initiated with Cashfree", {
+    id, refundId, refundAmountPaise: String(refundAmountPaise),
   });
 
   // ── Emails (non-fatal, DB already committed) ─────────────────────────────────
@@ -276,7 +281,7 @@ export async function POST(
       status:         "initiated",
       refundDisplay,
       refundPercent,
-      rzpRefundId:    refund.id,
+      refundId,
     }),
   }).catch((err) => logError("api/applications/[id]/cancel", `Refund admin notification FAILED id=${id}`, err));
 
@@ -286,7 +291,7 @@ export async function POST(
       success: true,
       refundPercent,
       refundAmountPaise,
-      rzpRefundId: refund.id,
+      refundId,
       application: { id, ...serializeDoc(updated.data()!) },
     },
     { headers },

@@ -4,8 +4,8 @@ import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
-import { createRazorpayPaymentLink } from "@/lib/payment-service";
-import { getRazorpay } from "@/lib/razorpay";
+import { createCashfreePaymentLink } from "@/lib/payment-service";
+import { cancelPaymentLink } from "@/lib/cashfree";
 import { sendEmail } from "@/lib/mailer";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import {
@@ -20,12 +20,12 @@ export const runtime = "nodejs";
 const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
 
 // Fields that must never be set directly by an admin PATCH — they are owned
-// exclusively by the payment flow and the Razorpay webhook.
+// exclusively by the payment flow and the Cashfree webhook.
 const PAYMENT_PROTECTED = new Set([
   "paymentStatus",
-  "rzpPaymentId",
-  "rzpPaymentLinkId",
-  "rzpPaymentLinkUrl",
+  "paymentOrderId",
+  "paymentLinkId",
+  "paymentLinkUrl",
   "paidAt",
   "paymentLinkSentAt",
 ]);
@@ -66,7 +66,7 @@ export async function PATCH(
   const newStatus  = body.status;
   logInfo("api/applications/[id]", "Status change requested", { id, prevStatus, newStatus, applicantEmail: prevData.email ?? "none" });
 
-  // "cancelled" carries refund-policy side effects (Razorpay refund, refund
+  // "cancelled" carries refund-policy side effects (Cashfree refund, refund
   // emails) that only POST /applications/[id]/cancel knows how to run —
   // block it here so it can never be set as a bare status flip.
   if (newStatus === "cancelled") {
@@ -85,19 +85,19 @@ export async function PATCH(
   delete updatePayload.createdAt;
 
   // Strip payment-sensitive fields — prevents an admin from manually forging
-  // a paid status without an actual Razorpay transaction.
+  // a paid status without an actual Cashfree transaction.
   for (const field of PAYMENT_PROTECTED) {
     delete updatePayload[field];
   }
 
-  // ── "accepted": Razorpay first, then atomic Firestore write ──────────────────
+  // ── "accepted": Cashfree first, then atomic Firestore write ──────────────────
   if (newStatus === "accepted" && newStatus !== prevStatus) {
-    // Step 1 — create Razorpay link (throws on failure → nothing written to DB)
-    let link: Awaited<ReturnType<typeof createRazorpayPaymentLink>>;
+    // Step 1 — create Cashfree link (throws on failure → nothing written to DB)
+    let link: Awaited<ReturnType<typeof createCashfreePaymentLink>>;
     try {
-      link = await createRazorpayPaymentLink(id, prevData);
+      link = await createCashfreePaymentLink(id, prevData);
     } catch (err: any) {
-      console.error("[accept] Razorpay error:", err?.error || err?.message);
+      console.error("[accept] Cashfree error:", err?.message);
       return NextResponse.json(
         { error: "Failed to create payment link. Application status was not updated." },
         { status: 502, headers },
@@ -105,7 +105,7 @@ export async function PATCH(
     }
 
     // Step 2 — use a transaction (not batch) so we can re-check status atomically.
-    // Guards against two concurrent "accept" requests both creating Razorpay links.
+    // Guards against two concurrent "accept" requests both creating Cashfree links.
     let alreadyAccepted = false;
     try {
       await adminDb.runTransaction(async (t) => {
@@ -122,7 +122,7 @@ export async function PATCH(
         t.update(docRef, {
           ...updatePayload,
           paymentStatus:     "link_sent",
-          rzpPaymentLinkId:  link.linkId,
+          paymentLinkId:     link.linkId,
           paymentLinkSentAt: FieldValue.serverTimestamp(),
         });
         t.set(adminDb.collection("payments").doc(id), {
@@ -132,8 +132,8 @@ export async function PATCH(
           applicantPhone:      prevData.mobileNumber || "",
           amount:              link.feePaise,
           currency:            "INR",
-          rzpPaymentLinkId:    link.linkId,
-          rzpPaymentLinkUrl:   link.linkUrl,
+          paymentLinkId:       link.linkId,
+          paymentLinkUrl:      link.linkUrl,
           status:              "link_created",
           expiresAt:           link.expiresAt,
           processedWebhookIds: [],
@@ -143,8 +143,8 @@ export async function PATCH(
       });
     } catch (err: any) {
       console.error("[accept] Transaction error:", err?.message);
-      // Cancel the orphaned Razorpay link since we can't store it
-      getRazorpay().paymentLink.cancel(link.linkId).catch(() => {});
+      // Cancel the orphaned Cashfree link since we can't store it
+      cancelPaymentLink(link.linkId).catch(() => {});
       return NextResponse.json(
         { error: "Failed to update database. Please try again." },
         { status: 500, headers },
@@ -152,8 +152,8 @@ export async function PATCH(
     }
 
     if (alreadyAccepted) {
-      // Cancel the orphaned Razorpay link created by this request
-      getRazorpay().paymentLink.cancel(link.linkId).catch(() => {});
+      // Cancel the orphaned Cashfree link created by this request
+      cancelPaymentLink(link.linkId).catch(() => {});
       return NextResponse.json(
         { error: "Application was already accepted in a concurrent session." },
         { status: 409, headers },
@@ -276,15 +276,15 @@ export async function DELETE(
         applicantName:        String(appData.fullName || "this applicant"),
         applicantEmail:       String(appData.email    || ""),
         feeDisplay,
-        rzpPaymentId:         String(paymentData?.rzpPaymentId || appData.rzpPaymentId || ""),
+        paymentOrderId:       String(paymentData?.paymentOrderId || appData.paymentOrderId || ""),
         refundState,
         message: refundState
           ? `${String(appData.fullName || "This applicant")} has a refund in status "${refundState}" for their ` +
             `${feeDisplay} fellowship fee. Deleting this record will destroy that history — it will not affect ` +
-            `the actual Razorpay transaction.`
+            `the actual Cashfree transaction.`
           : `${String(appData.fullName || "This applicant")} has already paid the fellowship fee of ` +
             `${feeDisplay}. Deleting this record will not trigger a refund. ` +
-            `You must process the refund manually via the Razorpay dashboard, or use ` +
+            `You must process the refund manually via the Cashfree dashboard, or use ` +
             `POST /applications/${id}/cancel instead of deleting.`,
       },
       { status: 409, headers }

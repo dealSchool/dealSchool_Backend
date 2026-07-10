@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
-import { getRazorpay } from "./razorpay";
+import { createPaymentLink } from "./cashfree";
 import { getCohortSettings } from "./cohort-settings";
 import { sendEmail } from "./mailer";
 import { renderPaymentLinkEmail } from "./email-templates";
@@ -16,49 +16,33 @@ export interface PaymentLinkData {
 }
 
 /**
- * Creates a Razorpay payment link and returns the data — NO Firebase writes.
+ * Creates a Cashfree payment link and returns the data — NO Firebase writes.
  * Throws on failure so the caller can decide whether to abort the DB update.
  */
-export async function createRazorpayPaymentLink(
+export async function createCashfreePaymentLink(
   applicationId: string,
   appData: { fullName?: string; email?: string; mobileNumber?: string },
 ): Promise<PaymentLinkData> {
   const { feePaise } = await getCohortSettings();
   const appBaseUrl   = (process.env.APP_BASE_URL || "http://localhost:3000/").replace(/\/$/, "/");
 
-  const rzp         = getRazorpay();
-  const paymentLink = await rzp.paymentLink.create({
-    amount:       feePaise,
-    currency:     "INR",
-    description:  "DealSchool Fellowship Program Fee",
-    reference_id: `${applicationId}_${Date.now()}`,
+  const paymentLink = await createPaymentLink({
+    linkId:      `${applicationId}_${Date.now()}`,
+    amountPaise: feePaise,
+    purpose:     "DealSchool Fellowship Program Fee",
     customer: {
-      name:  String(appData.fullName  || ""),
-      email: String(appData.email     || ""),
-      ...(appData.mobileNumber ? { contact: String(appData.mobileNumber) } : {}),
+      name:  String(appData.fullName || ""),
+      email: String(appData.email    || ""),
+      phone: String(appData.mobileNumber || ""),
     },
-    notify:          { sms: false, email: false },
-    reminder_enable: false,
-    callback_url:    appBaseUrl,
-    callback_method: "get",
-    notes:           { applicationId, source: "dealschool-auto" },
-    options: {
-      checkout: {
-        method: {
-          upi:        1,
-          card:       1,
-          netbanking: 1,
-          wallet:     1,
-          paylater:   1,
-        },
-      },
-    },
-  } as any);
+    notes:     { applicationId, source: "dealschool-auto" },
+    returnUrl: `${appBaseUrl}?aid=${applicationId}`,
+  });
 
   return {
-    linkId:    paymentLink.id,
-    linkUrl:   paymentLink.short_url,
-    expiresAt: Timestamp.fromDate(new Date((paymentLink.expire_by as number) * 1000)),
+    linkId:    paymentLink.linkId,
+    linkUrl:   paymentLink.linkUrl,
+    expiresAt: Timestamp.fromDate(paymentLink.expiresAt),
     feePaise,
   };
 }
@@ -90,10 +74,10 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
 
   let link: PaymentLinkData;
   try {
-    link = await createRazorpayPaymentLink(applicationId, appData);
-    logInfo("payment-service", "Razorpay payment link created", { applicationId, linkId: link.linkId, linkUrl: link.linkUrl, feePaise: String(link.feePaise) });
+    link = await createCashfreePaymentLink(applicationId, appData);
+    logInfo("payment-service", "Cashfree payment link created", { applicationId, linkId: link.linkId, linkUrl: link.linkUrl, feePaise: String(link.feePaise) });
   } catch (err: unknown) {
-    logError("payment-service", `Razorpay link creation FAILED applicationId=${applicationId}`, err);
+    logError("payment-service", `Cashfree link creation FAILED applicationId=${applicationId}`, err);
     await appRef.update({ paymentStatus: "error" });
     return;
   }
@@ -102,14 +86,14 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
 
   await adminDb.collection("payments").doc(applicationId).set({
     applicationId,
-    applicantName:     appData.fullName     || "",
-    applicantEmail:    appData.email        || "",
-    applicantPhone:    appData.mobileNumber || "",
-    amount:            feePaise,
-    currency:          "INR",
-    rzpPaymentLinkId:  linkId,
-    rzpPaymentLinkUrl: linkUrl,
-    status:            "link_created",
+    applicantName:    appData.fullName     || "",
+    applicantEmail:   appData.email        || "",
+    applicantPhone:   appData.mobileNumber || "",
+    amount:           feePaise,
+    currency:         "INR",
+    paymentLinkId:    linkId,
+    paymentLinkUrl:   linkUrl,
+    status:           "link_created",
     expiresAt,
     processedWebhookIds: [],
     createdAt: FieldValue.serverTimestamp(),
@@ -118,7 +102,7 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
 
   await appRef.update({
     paymentStatus:     "link_sent",
-    rzpPaymentLinkId:  linkId,
+    paymentLinkId:     linkId,
     paymentLinkSentAt: FieldValue.serverTimestamp(),
     updatedAt:         FieldValue.serverTimestamp(),
   });

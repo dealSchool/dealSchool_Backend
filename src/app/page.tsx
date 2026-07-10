@@ -1,4 +1,4 @@
-import * as crypto from "crypto";
+import { adminDb } from "@/lib/firebase-admin";
 
 export const runtime = "nodejs";
 
@@ -12,54 +12,27 @@ function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
-// Verifies the Razorpay Payment Link redirect per their documented scheme —
-// https://razorpay.com/docs/payment-links/verify-status/#via-redirect-to-site
-// This is display-only: the webhook (src/app/webhooks/razorpay/route.ts)
-// remains the sole source of truth for actually marking a payment "paid".
-function verifyCallbackSignature(params: {
-  paymentLinkId: string;
-  referenceId: string;
-  status: string;
-  paymentId: string;
-  signature: string;
-}): boolean {
-  const secret = process.env.RAZORPAY_KEY_SECRET;
-  if (!secret) return false;
-
-  const payload  = `${params.paymentLinkId}|${params.referenceId}|${params.status}|${params.paymentId}`;
-  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
-
-  try {
-    const expectedBuf = Buffer.from(expected, "hex");
-    const actualBuf   = Buffer.from(params.signature, "hex");
-    return expectedBuf.length === actualBuf.length && crypto.timingSafeEqual(expectedBuf, actualBuf);
-  } catch {
-    return false;
-  }
-}
-
 export default async function Home({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>;
 }) {
   const sp = await searchParams;
+  const applicationId = first(sp.aid);
 
-  const paymentId   = first(sp.razorpay_payment_id);
-  const linkId      = first(sp.razorpay_payment_link_id);
-  const referenceId = first(sp.razorpay_payment_link_reference_id);
-  const status      = first(sp.razorpay_payment_link_status);
-  const signature   = first(sp.razorpay_signature);
+  // Cashfree's redirect carries no signed status params (unlike Razorpay) —
+  // its own docs recommend against trusting redirect query params at all, so
+  // this reads our own already-verified Firestore state instead. The webhook
+  // (src/app/webhooks/cashfree/route.ts) remains the sole source of truth for
+  // actually marking a payment "paid"; this page is display-only.
+  let status: string | undefined;
+  if (applicationId) {
+    const snap = await adminDb.collection("payments").doc(applicationId).get();
+    status = snap.exists ? (snap.data()!.status as string | undefined) : undefined;
+  }
 
-  const isCallback = Boolean(paymentId && linkId && referenceId && status && signature);
-  const isVerified = isCallback && verifyCallbackSignature({
-    paymentLinkId: linkId!,
-    referenceId:   referenceId!,
-    status:        status!,
-    paymentId:     paymentId!,
-    signature:     signature!,
-  });
-  const isPaid = isVerified && status === "paid";
+  const isCallback = Boolean(applicationId);
+  const isPaid = status === "paid";
 
   let heading: string;
   let message: string;
@@ -67,12 +40,12 @@ export default async function Home({
   if (!isCallback) {
     heading = "DealSchool API";
     message = "This is the DealSchool backend service. There's nothing to see here directly — head to the main site instead.";
-  } else if (!isVerified) {
-    heading = "We Couldn't Verify This Page";
-    message = "This link's signature didn't check out, so we can't confirm your payment status here. Please check your email for a confirmation, or contact support@dealschool.in.";
   } else if (isPaid) {
     heading = "Payment Successful";
     message = "Thank you — your DealSchool Fellowship fee has been received. You can close this tab now; a confirmation email with your receipt is on its way to your inbox.";
+  } else if (!status) {
+    heading = "We Couldn't Find This Payment";
+    message = "We couldn't locate a payment record for this link. If you believe this is a mistake, please contact support@dealschool.in.";
   } else {
     heading = "Payment Not Completed";
     message = `Your payment status is "${status}". If this seems wrong, please contact support@dealschool.in.`;
@@ -118,7 +91,7 @@ export default async function Home({
         <div style={{ height: 3, background: "linear-gradient(90deg,#B8891A,#D4A62A 40%,#F0C040 70%,#D4A62A)" }} />
 
         <div style={{ padding: "32px" }}>
-          {isCallback && (
+          {isCallback && status && (
             <p
               style={{
                 display: "inline-block",
@@ -132,30 +105,12 @@ export default async function Home({
                 color: isPaid ? "#1e7a1e" : "#8A6510",
               }}
             >
-              {isPaid ? "PAID" : isVerified ? status?.toUpperCase() : "UNVERIFIED"}
+              {status.toUpperCase()}
             </p>
           )}
 
           <h1 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 700, color: "#082C6C" }}>{heading}</h1>
           <p style={{ margin: "0 0 24px", fontSize: 15, lineHeight: 1.7, color: "#374151" }}>{message}</p>
-
-          {isCallback && isVerified && paymentId && (
-            <div
-              style={{
-                background: "#FAFAF8",
-                border: "1px solid #EDE9DE",
-                borderRadius: 8,
-                padding: "14px 18px",
-                marginBottom: 24,
-                fontSize: 13,
-                color: "#5F6368",
-              }}
-            >
-              <div>
-                Payment ID: <span style={{ color: "#111111", fontWeight: 500 }}>{paymentId}</span>
-              </div>
-            </div>
-          )}
 
           {!isPaid && (
             <a

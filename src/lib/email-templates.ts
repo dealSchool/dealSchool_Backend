@@ -254,7 +254,7 @@ ${signature("DealSchool Team")}`);
 export interface PaymentReceiptEmailProps {
   applicantName: string;
   feeDisplay: string;
-  rzpPaymentId: string;
+  paymentId: string;
   paymentMethod?: string;
   paidOnDisplay?: string;
   applicantEmail?: string;
@@ -272,7 +272,7 @@ ${p("Your payment has been <strong style=\"color:#082C6C;\">confirmed</strong>. 
 </div>
 ${divider()}
 ${sectionTitle("Payment Details")}
-${field("Payment ID", pr.rzpPaymentId)}
+${field("Payment ID", pr.paymentId)}
 ${field("Method", pr.paymentMethod)}
 ${field("Paid On", pr.paidOnDisplay)}
 ${field("Email", pr.applicantEmail)}
@@ -288,7 +288,7 @@ export function renderPaymentReceiptAdminEmail(pr: {
   applicantName: string;
   applicantEmail: string;
   feeDisplay: string;
-  rzpPaymentId: string;
+  paymentId: string;
   applicationId: string;
 }): string {
   return base(`
@@ -298,7 +298,7 @@ ${sectionTitle("Payment Details")}
 ${field("Applicant Name", pr.applicantName)}
 ${field("Email Address", pr.applicantEmail)}
 ${field("Amount Paid", pr.feeDisplay)}
-${field("Razorpay Payment ID", pr.rzpPaymentId)}
+${field("Payment ID", pr.paymentId)}
 ${field("Application ID", pr.applicationId)}`);
 }
 
@@ -334,14 +334,14 @@ ${signature("DealSchool Team")}`);
 export function renderRefundCompletedEmail(pr: {
   applicantName: string;
   refundDisplay: string;
-  rzpRefundId: string;
+  refundId: string;
 }): string {
   return base(`
 ${greeting(pr.applicantName)}
 ${p("Your refund for the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong> has been <strong>completed</strong>.")}
 ${sectionTitle("Refund Confirmation")}
 ${field("Amount Refunded", pr.refundDisplay)}
-${field("Refund ID", pr.rzpRefundId)}
+${field("Refund ID", pr.refundId)}
 ${p("It may take a few additional days for your bank to reflect this in your statement.")}
 ${signature("DealSchool Team")}`);
 }
@@ -353,7 +353,7 @@ export interface RefundAdminNotificationProps {
   status: "initiated" | "completed" | "failed";
   refundDisplay: string;
   refundPercent: number;
-  rzpRefundId: string;
+  refundId: string;
 }
 
 export function renderRefundAdminNotification(pr: RefundAdminNotificationProps): string {
@@ -369,9 +369,9 @@ ${field("Applicant Name", pr.applicantName)}
 ${field("Email Address", pr.applicantEmail)}
 ${field("Refund Amount", pr.refundDisplay)}
 ${field("Refund %", `${pr.refundPercent}%`)}
-${field("Razorpay Refund ID", pr.rzpRefundId)}
+${field("Refund ID", pr.refundId)}
 ${field("Application ID", pr.applicationId)}
-${pr.status === "failed" ? infoBanner("This refund FAILED at Razorpay. Please investigate and process it manually via the Razorpay dashboard if needed.") : ""}`);
+${pr.status === "failed" ? infoBanner("This refund FAILED at Cashfree. Please investigate and process it manually via the Cashfree dashboard if needed.") : ""}`);
 }
 
 // ─── Admin password reset ─────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
-import { getRazorpay } from "@/lib/razorpay";
+import { cancelPaymentLink } from "@/lib/cashfree";
 import { createAndSendPaymentLink } from "@/lib/payment-service";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 
@@ -77,11 +77,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const oldLinkId: string | undefined = appData.rzpPaymentLinkId;
+  const oldLinkId: string | undefined = appData.paymentLinkId;
   if (oldLinkId && appData.paymentStatus !== "paid") {
     try {
-      const rzp = getRazorpay();
-      await rzp.paymentLink.cancel(oldLinkId);
+      await cancelPaymentLink(oldLinkId);
       logInfo("api/payment/resend", "Old payment link cancelled", { applicationId, oldLinkId });
     } catch (err: unknown) {
       logWarn("api/payment/resend", `Could not cancel old link (may already be expired/cancelled) applicationId=${applicationId} oldLinkId=${oldLinkId}`);
