@@ -40,6 +40,7 @@ export const config = {
   matcher: [
     "/applications/:path*",
     "/auth/:path*",
+    "/brochure-requests/:path*",
     "/contacts/:path*",
     "/payment/:path*",
     "/settings/:path*",

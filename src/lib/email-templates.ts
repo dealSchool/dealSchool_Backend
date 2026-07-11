@@ -434,3 +434,21 @@ ${field("Subject", pr.subject)}
 ${answerBox(pr.message)}
 ${signature("DealSchool Team")}`);
 }
+
+// ─── Brochure request ─────────────────────────────────────────────────────────
+
+export interface BrochureRequestAdminProps {
+  name: string;
+  email: string;
+  contact: string;
+  city: string;
+}
+
+export function renderBrochureRequestAdmin(pr: BrochureRequestAdminProps): string {
+  return base(`
+<p style="margin:0 0 4px;font-family:${FONT};font-size:13px;color:#5F6368;">New Lead</p>
+<p style="margin:0 0 24px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Program Brochure Requested</p>
+${sectionTitle("Requester Details")}
+${twoCol(field("Name", pr.name), field("Email Address", pr.email))}
+${twoCol(field("Contact Number", pr.contact), field("City", pr.city))}`);
+}
