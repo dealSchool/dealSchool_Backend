@@ -102,6 +102,20 @@ export async function POST(request: NextRequest) {
     const safeEmail   = sanitizeHeader(String(email)).toLowerCase().slice(0, 200);
     const safeCity    = sanitizeHeader(String(city)).slice(0, 100);
 
+    // Skip saving if this exact email + contact combination already requested a brochure
+    const dupSnap = await adminDb
+      .collection("brochureRequests")
+      .where("email", "==", safeEmail)
+      .where("contact", "==", safeContact)
+      .limit(1)
+      .get();
+
+    if (!dupSnap.empty) {
+      const existingId = dupSnap.docs[0].id;
+      logInfo("api/brochure-requests", "Duplicate brochure request skipped", { requestId: existingId, email: safeEmail });
+      return NextResponse.json({ success: true, requestId: existingId, duplicate: true }, { status: 200, headers });
+    }
+
     const docRef = adminDb.collection("brochureRequests").doc();
     await docRef.set({
       name:      safeName,
