@@ -32,7 +32,6 @@ export interface CreatePaymentLinkParams {
   purpose:     string;
   customer:    { name?: string; email?: string; phone: string };
   notes?:      Record<string, string>;
-  returnUrl:   string;
   notifyUrl:   string;
 }
 
@@ -77,7 +76,12 @@ export async function createPaymentLink(params: CreatePaymentLinkParams): Promis
       // per-link notify_url, NOT via the merchant dashboard's general
       // Webhooks config — that screen only covers order/payment/refund
       // events. Without this, "paid" notifications never arrive.
-      link_meta: { return_url: params.returnUrl, notify_url: params.notifyUrl },
+      //
+      // return_url is deliberately omitted: Cashfree's own docs say that
+      // without one, the customer lands on Cashfree's default post-payment
+      // page instead of being redirected back to us — which is what we want
+      // here (no redirect to our own site after paying via the emailed link).
+      link_meta: { notify_url: params.notifyUrl },
     }),
   });
 
@@ -94,6 +98,34 @@ export async function fetchPaymentLink(linkId: string): Promise<any> {
 
 export async function cancelPaymentLink(linkId: string): Promise<void> {
   await cashfreeFetch(`/links/${encodeURIComponent(linkId)}/cancel`, { method: "POST" });
+}
+
+export async function fetchOrderPayments(orderId: string): Promise<any[]> {
+  const body = await cashfreeFetch(`/orders/${encodeURIComponent(orderId)}/payments`, { method: "GET" });
+  return Array.isArray(body) ? body : [];
+}
+
+// payment_method is a Cashfree "oneOf" object — exactly one of these keys is
+// present depending on how the customer actually paid.
+export function describePaymentMethod(paymentMethod: any): string {
+  if (!paymentMethod || typeof paymentMethod !== "object") return "N/A";
+  if (paymentMethod.card) {
+    const c = paymentMethod.card;
+    const network = c.card_network ? String(c.card_network).toUpperCase() : "Card";
+    const type = c.card_type === "credit_card" ? "Credit" : c.card_type === "debit_card" ? "Debit" : "";
+    return `${network} ${type} Card`.replace(/\s+/g, " ").trim();
+  }
+  if (paymentMethod.upi) return "UPI";
+  if (paymentMethod.netbanking) {
+    const bank = paymentMethod.netbanking.netbanking_bank_name;
+    return bank ? `Netbanking (${bank})` : "Netbanking";
+  }
+  if (paymentMethod.app) return paymentMethod.app.provider ? `${paymentMethod.app.provider} Wallet` : "Wallet";
+  if (paymentMethod.paylater) return paymentMethod.paylater.provider ? `Pay Later (${paymentMethod.paylater.provider})` : "Pay Later";
+  if (paymentMethod.cardless_emi) return "Cardless EMI";
+  if (paymentMethod.emi) return "Card EMI";
+  if (paymentMethod.banktransfer) return "Bank Transfer";
+  return "N/A";
 }
 
 export interface CreateRefundParams {

@@ -39,7 +39,6 @@ export async function createCashfreePaymentLink(
       phone: String(appData.mobileNumber || ""),
     },
     notes:     { applicationId, source: "dealschool-auto" },
-    returnUrl: `${appBaseUrl}?aid=${applicationId}`,
     notifyUrl: `${appBaseUrl}webhooks/cashfree`,
   });
 

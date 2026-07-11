@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
-import { fetchPaymentLink, verifyCashfreeWebhookSignature } from "@/lib/cashfree";
+import { fetchPaymentLink, fetchOrderPayments, describePaymentMethod, verifyCashfreeWebhookSignature } from "@/lib/cashfree";
 import {
   renderPaymentReceiptEmail,
   renderPaymentReceiptAdminEmail,
@@ -106,6 +106,30 @@ export async function POST(request: NextRequest) {
         return new Response("OK", { status: 200 });
       }
 
+      // ── Fetch payment method / transaction details ───────────────────────────
+      // The PAYMENT_LINK_EVENT payload's order object has no payment-method or
+      // timestamp fields — that detail only exists via this separate API call.
+      // Best-effort: a failure here shouldn't block marking the payment paid.
+      const cfLinkId: string | number | null = data.cf_link_id ?? null;
+      let cfPaymentId: string | number | null = null;
+      let paymentMethodLabel = "N/A";
+      let paymentMethodRaw: unknown = null;
+      let bankReference: string | null = null;
+      let paymentTime: string | null = null;
+      try {
+        const payments = await fetchOrderPayments(orderId);
+        const successPayment = payments.find((p: any) => p.payment_status === "SUCCESS");
+        if (successPayment) {
+          cfPaymentId        = successPayment.cf_payment_id ?? null;
+          paymentMethodRaw    = successPayment.payment_method ?? null;
+          paymentMethodLabel  = describePaymentMethod(successPayment.payment_method);
+          bankReference       = successPayment.bank_reference ?? null;
+          paymentTime         = successPayment.payment_time ?? null;
+        }
+      } catch (err: unknown) {
+        logWarn("api/webhooks/cashfree", `Could not fetch order payments for method details applicationId=${applicationId} orderId=${orderId}`);
+      }
+
       // ── Atomic idempotent write ────────────────────────────────────────────────
       // Cashfree doesn't send a top-level event id like Razorpay's `event.id`;
       // orderId is unique per real-world paid occurrence, so it doubles as the
@@ -131,6 +155,12 @@ export async function POST(request: NextRequest) {
 
         t.set(paymentRef, {
           paymentOrderId: orderId,
+          cfLinkId,
+          cfPaymentId,
+          paymentMethod:    paymentMethodLabel,
+          paymentMethodRaw,
+          bankReference,
+          paymentTime,
           status:    "paid",
           paidAt:    FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -162,8 +192,8 @@ export async function POST(request: NextRequest) {
       if (!appData?.email) {
         logWarn("api/webhooks/cashfree", "Applicant has no email address — payment receipt skipped", { applicationId });
       } else {
-        const paymentMethod = String(data.order?.payment_method || "N/A").toUpperCase();
-        const paymentDate   = data.order?.order_created_at ? new Date(data.order.order_created_at) : new Date();
+        const paymentMethod = paymentMethodLabel;
+        const paymentDate   = paymentTime ? new Date(paymentTime) : new Date();
         const paidOnDisplay = paymentDate.toLocaleString("en-IN", {
           day: "2-digit", month: "short", year: "numeric",
           hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true,
