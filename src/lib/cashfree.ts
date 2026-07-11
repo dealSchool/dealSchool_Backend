@@ -42,9 +42,21 @@ export interface PaymentLinkResult {
   expiresAt: Date;
 }
 
+// Cashfree wants a bare 10-digit Indian mobile number — the application form
+// stores it with a "+91" (or similar) prefix, so strip everything down to the
+// last 10 digits here rather than changing what the form collects/stores.
+function normalizeIndianMobile(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  return digits.slice(-10);
+}
+
 export async function createPaymentLink(params: CreatePaymentLinkParams): Promise<PaymentLinkResult> {
   if (!params.customer.phone) {
     throw new Error("Cashfree requires a customer phone number to create a payment link");
+  }
+  const customerPhone = normalizeIndianMobile(params.customer.phone);
+  if (customerPhone.length !== 10) {
+    throw new Error(`Customer phone "${params.customer.phone}" does not contain a valid 10-digit mobile number`);
   }
 
   const body = await cashfreeFetch("/links", {
@@ -55,7 +67,7 @@ export async function createPaymentLink(params: CreatePaymentLinkParams): Promis
       link_currency: "INR",
       link_purpose:  params.purpose,
       customer_details: {
-        customer_phone: params.customer.phone,
+        customer_phone: customerPhone,
         ...(params.customer.name  ? { customer_name:  params.customer.name }  : {}),
         ...(params.customer.email ? { customer_email: params.customer.email } : {}),
       },
