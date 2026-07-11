@@ -24,7 +24,10 @@ export async function createCashfreePaymentLink(
   appData: { fullName?: string; email?: string; mobileNumber?: string },
 ): Promise<PaymentLinkData> {
   const { feePaise } = await getCohortSettings();
-  const appBaseUrl   = (process.env.APP_BASE_URL || "http://localhost:3000/").replace(/\/$/, "/");
+  // Normalize to exactly one trailing slash regardless of whether
+  // APP_BASE_URL was set with or without one — a bare .replace(/\/$/, "/")
+  // is a no-op when there's no existing trailing slash to replace.
+  const appBaseUrl = (process.env.APP_BASE_URL || "http://localhost:3000").replace(/\/+$/, "") + "/";
 
   const paymentLink = await createPaymentLink({
     linkId:      `${applicationId}_${Date.now()}`,
