@@ -164,18 +164,21 @@ export async function createRefund(params: CreateRefundParams): Promise<any> {
   });
 }
 
-export async function verifyCashfreeWebhookSignature(rawBody: string, timestamp: string, signatureB64: string): Promise<boolean> {
-  const mode = await getPaymentMode();
-  const secret = CASHFREE_CREDENTIALS[mode].secretKey;
-  if (!secret) return false;
+// Checked against every configured secret (sandbox + live), not just whichever
+// mode is currently active — a webhook can arrive after the admin has already
+// toggled the mode again, and its signature was computed with the OLD mode's
+// secret, not the current one.
+export function verifyCashfreeWebhookSignature(rawBody: string, timestamp: string, signatureB64: string): boolean {
+  const secrets = Object.values(CASHFREE_CREDENTIALS).map((c) => c.secretKey).filter(Boolean);
 
-  const expected = crypto.createHmac("sha256", secret).update(timestamp + rawBody).digest("base64");
-
-  try {
-    const expectedBuf = Buffer.from(expected, "base64");
-    const incomingBuf = Buffer.from(signatureB64, "base64");
-    return expectedBuf.length === incomingBuf.length && crypto.timingSafeEqual(expectedBuf, incomingBuf);
-  } catch {
-    return false;
-  }
+  return secrets.some((secret) => {
+    const expected = crypto.createHmac("sha256", secret).update(timestamp + rawBody).digest("base64");
+    try {
+      const expectedBuf = Buffer.from(expected, "base64");
+      const incomingBuf = Buffer.from(signatureB64, "base64");
+      return expectedBuf.length === incomingBuf.length && crypto.timingSafeEqual(expectedBuf, incomingBuf);
+    } catch {
+      return false;
+    }
+  });
 }
