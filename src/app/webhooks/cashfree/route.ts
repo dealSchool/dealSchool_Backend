@@ -37,14 +37,9 @@ export async function POST(request: NextRequest) {
     return new Response("Missing signature", { status: 400 });
   }
 
-  if (!process.env.CASHFREE_SECRET_KEY) {
-    logError("api/webhooks/cashfree", "CASHFREE_SECRET_KEY not set in environment — cannot verify signature");
-    return new Response("Server misconfiguration", { status: 500 });
-  }
-
-  const sigValid = verifyCashfreeWebhookSignature(rawBody, timestamp, incomingSig);
+  const sigValid = await verifyCashfreeWebhookSignature(rawBody, timestamp, incomingSig);
   if (!sigValid) {
-    logError("api/webhooks/cashfree", "Signature verification FAILED — check CASHFREE_SECRET_KEY matches the Cashfree dashboard");
+    logError("api/webhooks/cashfree", "Signature verification FAILED — check the active mode's CASHFREE_SECRET_KEY matches the Cashfree dashboard");
     return new Response("Invalid signature", { status: 400 });
   }
 

@@ -1,23 +1,41 @@
 import * as crypto from "crypto";
+import { getPaymentMode, type PaymentMode } from "./payment-mode-settings";
 
 const API_VERSION = "2023-08-01";
 
-export function cashfreeBaseUrl(): string {
-  const env = process.env.CASHFREE_ENV || "sandbox";
-  return env === "production" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
+// Sandbox falls back to the legacy unsuffixed vars so existing .env.local
+// setups keep working; live requires its own explicit *_LIVE pair — sandbox
+// and live are separate Cashfree accounts with different credentials.
+const CASHFREE_CREDENTIALS: Record<PaymentMode, { appId: string; secretKey: string }> = {
+  sandbox: {
+    appId:     process.env.CASHFREE_APP_ID_SANDBOX     || process.env.CASHFREE_APP_ID     || "",
+    secretKey: process.env.CASHFREE_SECRET_KEY_SANDBOX || process.env.CASHFREE_SECRET_KEY || "",
+  },
+  live: {
+    appId:     process.env.CASHFREE_APP_ID_LIVE     || "",
+    secretKey: process.env.CASHFREE_SECRET_KEY_LIVE || "",
+  },
+};
+
+export async function cashfreeBaseUrl(): Promise<string> {
+  const mode = await getPaymentMode();
+  return mode === "live" ? "https://api.cashfree.com/pg" : "https://sandbox.cashfree.com/pg";
 }
 
-function cashfreeHeaders(): Record<string, string> {
+async function cashfreeHeaders(): Promise<Record<string, string>> {
+  const mode = await getPaymentMode();
+  const { appId, secretKey } = CASHFREE_CREDENTIALS[mode];
   return {
-    "x-client-id":     process.env.CASHFREE_APP_ID!,
-    "x-client-secret": process.env.CASHFREE_SECRET_KEY!,
+    "x-client-id":     appId,
+    "x-client-secret": secretKey,
     "x-api-version":   API_VERSION,
     "Content-Type":    "application/json",
   };
 }
 
 async function cashfreeFetch(path: string, init: RequestInit): Promise<any> {
-  const res = await fetch(`${cashfreeBaseUrl()}${path}`, { ...init, headers: cashfreeHeaders() });
+  const [baseUrl, headers] = await Promise.all([cashfreeBaseUrl(), cashfreeHeaders()]);
+  const res = await fetch(`${baseUrl}${path}`, { ...init, headers });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     const message = body?.message || body?.error_description || `Cashfree API error (${res.status})`;
@@ -146,8 +164,9 @@ export async function createRefund(params: CreateRefundParams): Promise<any> {
   });
 }
 
-export function verifyCashfreeWebhookSignature(rawBody: string, timestamp: string, signatureB64: string): boolean {
-  const secret = process.env.CASHFREE_SECRET_KEY;
+export async function verifyCashfreeWebhookSignature(rawBody: string, timestamp: string, signatureB64: string): Promise<boolean> {
+  const mode = await getPaymentMode();
+  const secret = CASHFREE_CREDENTIALS[mode].secretKey;
   if (!secret) return false;
 
   const expected = crypto.createHmac("sha256", secret).update(timestamp + rawBody).digest("base64");
