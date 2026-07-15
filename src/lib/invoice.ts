@@ -1,6 +1,17 @@
 import PDFDocument from "pdfkit";
+import * as fs from "fs";
+import * as path from "path";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
+
+// pdfkit's built-in "Helvetica"/"Helvetica-Bold" fonts load metrics from .afm
+// files on disk (relative to the compiled bundle) — Next.js's webpack build
+// doesn't carry those files along, causing ENOENT at runtime. Embedding actual
+// font files sidesteps that lookup entirely, and matches the Plus Jakarta Sans
+// used everywhere else in the product (see FONT in email-templates.ts).
+const FONTS_DIR = path.join(process.cwd(), "src/assets/fonts");
+const REGULAR_FONT = fs.readFileSync(path.join(FONTS_DIR, "PlusJakartaSans-Regular.ttf"));
+const BOLD_FONT = fs.readFileSync(path.join(FONTS_DIR, "PlusJakartaSans-Bold.ttf"));
 
 const NAVY = "#082C6C";
 const GOLD = "#D4A62A";
@@ -44,6 +55,9 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
+    doc.registerFont("Body", REGULAR_FONT);
+    doc.registerFont("Heading", BOLD_FONT);
+
     const formattedDate = data.paymentDate.toLocaleDateString("en-IN", {
       year: "numeric",
       month: "long",
@@ -51,13 +65,13 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
     });
 
     // Header
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(22).text("DealSchool", 50, 50);
-    doc.fillColor(GREY).font("Helvetica").fontSize(9).text("Venture Fellowship", 50, 76);
+    doc.fillColor(NAVY).font("Heading").fontSize(22).text("DealSchool", 50, 50);
+    doc.fillColor(GREY).font("Body").fontSize(9).text("Venture Fellowship", 50, 76);
 
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(16).text("INVOICE", 350, 50, { width: 195, align: "right" });
+    doc.fillColor(NAVY).font("Heading").fontSize(16).text("INVOICE", 350, 50, { width: 195, align: "right" });
     doc
       .fillColor(GREY)
-      .font("Helvetica")
+      .font("Body")
       .fontSize(10)
       .text(`Invoice #: ${data.invoiceNumber}`, 350, 76, { width: 195, align: "right" })
       .text(`Date: ${formattedDate}`, 350, 90, { width: 195, align: "right" });
@@ -65,10 +79,10 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
     doc.moveTo(50, 115).lineTo(545, 115).strokeColor(GOLD).lineWidth(2).stroke();
 
     // Billed to
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(11).text("Billed To", 50, 140);
+    doc.fillColor(NAVY).font("Heading").fontSize(11).text("Billed To", 50, 140);
     doc
       .fillColor(INK)
-      .font("Helvetica")
+      .font("Body")
       .fontSize(11)
       .text(data.applicantName, 50, 158)
       .fillColor(GREY)
@@ -79,7 +93,7 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
     const tableTop = 220;
     doc
       .fillColor(GREY)
-      .font("Helvetica-Bold")
+      .font("Heading")
       .fontSize(9)
       .text("DESCRIPTION", 50, tableTop)
       .text("AMOUNT", 450, tableTop, { width: 95, align: "right" });
@@ -87,7 +101,7 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
 
     doc
       .fillColor(INK)
-      .font("Helvetica")
+      .font("Body")
       .fontSize(11)
       .text("DealSchool Fellowship Program Fee", 50, tableTop + 26)
       .text(data.amountDisplay, 450, tableTop + 26, { width: 95, align: "right" });
@@ -96,17 +110,17 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
 
     doc
       .fillColor(NAVY)
-      .font("Helvetica-Bold")
+      .font("Heading")
       .fontSize(12)
       .text("Total Paid", 350, tableTop + 70, { width: 100, align: "right" })
       .text(data.amountDisplay, 450, tableTop + 70, { width: 95, align: "right" });
 
     // Payment details
     const payTop = tableTop + 120;
-    doc.fillColor(NAVY).font("Helvetica-Bold").fontSize(11).text("Payment Details", 50, payTop);
+    doc.fillColor(NAVY).font("Heading").fontSize(11).text("Payment Details", 50, payTop);
     doc
       .fillColor(GREY)
-      .font("Helvetica")
+      .font("Body")
       .fontSize(10)
       .text(`Payment ID: ${data.paymentId}`, 50, payTop + 20)
       .text(`Payment Method: ${data.paymentMethod}`, 50, payTop + 36)
@@ -115,7 +129,7 @@ export function generateInvoicePdf(data: InvoiceData): Promise<Buffer> {
     // Footer
     doc
       .fillColor(GREY)
-      .font("Helvetica")
+      .font("Body")
       .fontSize(9)
       .text("DealSchool  ·  support@dealschool.in", 50, 760, { width: 495, align: "center" });
 
