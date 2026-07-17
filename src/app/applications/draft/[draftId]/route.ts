@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
+import { verifyAdmin } from "@/lib/verify-admin";
 import { logInfo, logWarn } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
@@ -60,6 +61,34 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
   logInfo("api/applications/draft/[draftId]", "Draft step saved", { draftId, step });
   return NextResponse.json({ success: true, currentStep }, { headers });
+}
+
+// ─── DELETE /applications/draft/[draftId] — admin: delete an in-progress draft ─
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ draftId: string }> }
+) {
+  const { draftId } = await params;
+  const origin  = request.headers.get("origin");
+  const headers = corsHeaders(origin);
+  logInfo("api/applications/draft/[draftId]", "DELETE received", { draftId });
+
+  try { await verifyAdmin(request); }
+  catch {
+    logWarn("api/applications/draft/[draftId]", "Unauthorized DELETE attempt", { draftId });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers });
+  }
+
+  const docRef = adminDb.collection("applicationDrafts").doc(draftId);
+  const snap   = await docRef.get();
+  if (!snap.exists) {
+    logWarn("api/applications/draft/[draftId]", "Draft not found", { draftId });
+    return NextResponse.json({ error: "Draft not found" }, { status: 404, headers });
+  }
+
+  await docRef.delete();
+  logInfo("api/applications/draft/[draftId]", "DELETE 200 — draft deleted", { draftId });
+  return NextResponse.json({ success: true }, { headers });
 }
 
 export async function OPTIONS(request: NextRequest) {
