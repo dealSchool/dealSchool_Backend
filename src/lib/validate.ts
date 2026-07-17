@@ -9,3 +9,11 @@ export function isValidEmail(email: string): boolean {
 export function sanitizeHeader(value: string): string {
   return String(value).replace(/[\r\n\t]+/g, " ").trim();
 }
+
+/** Mask an email for display without fully revealing it, e.g. "jo***@gmail.com" */
+export function maskEmail(email: string): string {
+  const [local, domain] = String(email).split("@");
+  if (!local || !domain) return "***";
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}${"*".repeat(Math.max(local.length - visible.length, 3))}@${domain}`;
+}

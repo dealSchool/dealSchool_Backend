@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     logInfo("api/brochure-requests", "Brochure request saved to Firestore", { requestId: docRef.id, email: safeEmail });
 
-    const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
+    const adminEmail = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";
     sendEmail({
       from:    ADMIN_SENDER,
       to:      adminEmail,

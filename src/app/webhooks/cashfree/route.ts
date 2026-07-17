@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
       const appSnap  = await appRef.get();
       const appData  = appSnap.data();
       const feeDisplay = `₹${(feePaise / 100).toFixed(0)}`;
-      const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
+      const adminEmail = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";
 
       if (!appData?.email) {
         logWarn("api/webhooks/cashfree", "Applicant has no email address — payment receipt skipped", { applicationId });
@@ -357,7 +357,7 @@ export async function POST(request: NextRequest) {
     const appData           = appSnap.data();
     const refundAmountPaise = Math.round(Number(refund.refund_amount) * 100);
     const refundDisplay     = `₹${(refundAmountPaise / 100).toFixed(0)}`;
-    const adminEmail        = process.env.ADMIN_EMAIL || "support@dealschool.in";
+    const adminEmail        = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";
 
     if (isProcessed && appData?.email) {
       logInfo("api/webhooks/cashfree", "Sending refund completed email", { applicationId, applicantEmail: appData.email });

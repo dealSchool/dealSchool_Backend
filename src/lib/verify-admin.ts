@@ -32,7 +32,7 @@ export async function verifyAdmin(request: Request): Promise<{ uid: string; emai
     throw err;
   }
 
-  const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
+  const adminEmail = process.env.ADMIN_EMAIL || "admin@dealschool.in";
 
   if (decoded.email === adminEmail) {
     return { uid: decoded.uid, email: decoded.email };

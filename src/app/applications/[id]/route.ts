@@ -30,6 +30,36 @@ const PAYMENT_PROTECTED = new Set([
   "paymentLinkSentAt",
 ]);
 
+// ─── GET /applications/[id] — admin: full detail view ─────────────────────────
+// Returns every field the applicant submitted plus payment/refund metadata from
+// the "payments" collection, so the admin portal can render a complete detail
+// view without piecing it together from the paginated list response.
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const origin  = request.headers.get("origin");
+  const headers = corsHeaders(origin);
+
+  try { await verifyAdmin(request); }
+  catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers }); }
+
+  const [appSnap, paymentSnap] = await Promise.all([
+    adminDb.collection("applications").doc(id).get(),
+    adminDb.collection("payments").doc(id).get(),
+  ]);
+
+  if (!appSnap.exists) {
+    return NextResponse.json({ error: "Application not found" }, { status: 404, headers });
+  }
+
+  const application = { id: appSnap.id, ...serializeDoc(appSnap.data()!) };
+  const payment      = paymentSnap.exists ? { id: paymentSnap.id, ...serializeDoc(paymentSnap.data()!) } : null;
+
+  return NextResponse.json({ application, payment }, { headers });
+}
+
 // ─── PATCH /applications/[id] — admin: update status ──────────────────────────
 export async function PATCH(
   request: NextRequest,

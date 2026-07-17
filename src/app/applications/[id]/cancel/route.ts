@@ -18,7 +18,7 @@ import {
 export const runtime = "nodejs";
 
 const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
-const ADMIN_EMAIL      = process.env.ADMIN_EMAIL || "support@dealschool.in";
+const ADMIN_EMAIL      = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";
 
 // A payment in either of these states cannot be cancelled again — the webhook
 // (or a prior call) already owns the outcome. "refund_failed" is deliberately

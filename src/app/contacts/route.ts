@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
+    const adminEmail = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";
     logInfo("api/contacts", "Contact saved to Firestore", { contactId: docRef.id, senderEmail: safeEmail });
 
     sendEmail({

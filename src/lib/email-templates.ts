@@ -398,6 +398,18 @@ ${divider()}
 <p style="margin:0;font-family:${FONT};font-size:12px;color:#9ca3af;">If you did not initiate this request, please review your account security immediately or contact us at <a href="mailto:support@dealschool.in" style="color:#0D3B8E;">support@dealschool.in</a>.</p>`);
 }
 
+// ─── Draft application recovery OTP ───────────────────────────────────────────
+
+export function renderDraftOTP(pr: { otpCode: string }): string {
+  return base(`
+<p style="margin:0 0 20px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Resume Your Application</p>
+${p("Use the code below to verify it's you and pick up your DealSchool application right where you left off.")}
+<p style="font-size:40px;font-family:'Courier New',Courier,monospace;letter-spacing:14px;text-align:center;font-weight:700;color:#082C6C;margin:28px 0;background:#FAFAF8;border-radius:8px;padding:24px 0;">${esc(pr.otpCode)}</p>
+<p style="text-align:center;font-family:${FONT};color:#5F6368;font-size:13px;margin:0 0 16px;">Valid for <strong>10 minutes</strong> only. Do not share this with anyone.</p>
+${divider()}
+<p style="margin:0;font-family:${FONT};font-size:12px;color:#9ca3af;">If you did not request this, you can safely ignore this email — no changes will be made to your application.</p>`);
+}
+
 // ─── Contact inquiry ──────────────────────────────────────────────────────────
 
 export interface ContactInquiryAdminProps {

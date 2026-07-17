@@ -1,22 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
-import { sendEmail } from "@/lib/mailer";
-import { logInfo, logError, logWarn } from "@/lib/logger";
+import { logInfo, logWarn } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { isValidEmail, sanitizeHeader } from "@/lib/validate";
-import {
-  renderAppReceivedCandidate,
-  renderAppReceivedAdmin,
-} from "@/lib/email-templates";
+import { submitApplication } from "@/lib/application-service";
 
 export const runtime = "nodejs";
-
-const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
-const ADMIN_SENDER     = "DealSchool <support@dealschool.in>";
 
 const PAGE_SIZE = 50;
 
@@ -98,158 +89,13 @@ export async function POST(request: NextRequest) {
   try { data = await request.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }
 
-  const required = ["fullName", "email", "mobileNumber", "currentStatus"];
-  const missing  = required.filter((f) => !data[f]);
-  if (missing.length) {
-    return NextResponse.json({ error: `Missing fields: ${missing.join(", ")}` }, { status: 400, headers });
+  const result = await submitApplication(data);
+  if (!result.ok) {
+    return NextResponse.json(result.body, { status: result.status, headers });
   }
 
-  // Validate email format — prevents injection of multiple recipients
-  if (!isValidEmail(String(data.email))) {
-    return NextResponse.json({ error: "Invalid email address" }, { status: 400, headers });
-  }
-
-  // Sanitize fields used in email headers/subjects to prevent SMTP header injection
-  data.fullName     = sanitizeHeader(String(data.fullName));
-  data.email        = sanitizeHeader(String(data.email)).toLowerCase();
-  data.mobileNumber = sanitizeHeader(String(data.mobileNumber));
-
-  // Reject duplicate submissions — check email AND phone number permanently
-  const [emailSnap, phoneSnap] = await Promise.all([
-    adminDb.collection("applications").where("email", "==", data.email).limit(1).get(),
-    adminDb.collection("applications").where("mobileNumber", "==", data.mobileNumber).limit(1).get(),
-  ]);
-  if (!emailSnap.empty || !phoneSnap.empty) {
-    return NextResponse.json(
-      {
-        alreadyApplied: true,
-        error:
-          "You've already applied to DealSchool. Our team will reach out to you shortly. For any queries, contact support@dealschool.in",
-      },
-      { status: 409, headers }
-    );
-  }
-
-  const docRef = adminDb.collection("applications").doc();
-
-  const payload = {
-    fullName:      String(data.fullName),
-    mobileNumber:  String(data.mobileNumber),
-    email:         String(data.email),
-    linkedinUrl:   String(data.linkedinUrl   || ""),
-    city:          String(data.city          || ""),
-    currentStatus: String(data.currentStatus || ""),
-
-    ...(data.currentStatus === "Student" && {
-      collegeName:    data.collegeName,
-      degree:         data.degree,
-      graduationYear: data.graduationYear,
-    }),
-    ...(["Working Professional", "Recent Graduate (0–2 years of experience)"].includes(data.currentStatus) && {
-      currentRole:                  data.currentRole,
-      companyName:                  data.companyName,
-      yearsOfExperience:            data.yearsOfExperience,
-      degreeEducationalBackground:  data.degreeEducationalBackground,
-      graduationYear:               data.graduationYear,
-    }),
-    ...(data.currentStatus === "Founder" && {
-      startupName:             data.startupName,
-      industrySector:          data.industrySector,
-      startupLinkedinProfile:  data.startupLinkedinProfile,
-    }),
-    ...(data.currentStatus === "Freelancer" && {
-      areaOfWork:                data.areaOfWork,
-      yearsOfExperience:         data.yearsOfExperience,
-      freelancerLinkedinProfile: data.freelancerLinkedinProfile,
-    }),
-    ...(data.currentStatus === "Other" && { otherStatusSpecify: data.otherStatusSpecify }),
-
-    primaryReason:      String(data.primaryReason      || ""),
-    primaryReasonOther: String(data.primaryReasonOther || ""),
-    assessmentQ1:       String(data.assessmentQ1       || ""),
-    assessmentQ2:       String(data.assessmentQ2       || ""),
-    assessmentQ3:       String(data.assessmentQ3       || ""),
-    resumeUrl:          String(data.resumeUrl || data.resumeLink || ""),
-    discoverySource:    String(data.discoverySource    || ""),
-    discoverySourceOther: String(data.discoverySourceOther || ""),
-
-    status:    "pending",
-    createdAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-  };
-
-  await docRef.set(payload);
-  logInfo("api/applications", "Application saved to Firestore", { applicationId: docRef.id, email: data.email, currentStatus: data.currentStatus });
-
-  // ── Emails (non-fatal) ──────────────────────────────────────────────────────
-  const adminEmail = process.env.ADMIN_EMAIL || "support@dealschool.in";
-
-  let affiliationLabel = "Affiliation Detail";
-  let affiliationValue = "Core Curriculum";
-  if (data.currentStatus === "Student") {
-    affiliationLabel = "College / University";
-    affiliationValue = String(data.collegeName || "Unspecified College");
-  } else if (["Working Professional", "Recent Graduate (0–2 years of experience)"].includes(data.currentStatus)) {
-    affiliationLabel = "Organization / Company";
-    affiliationValue = String(data.companyName || "Unspecified Company");
-  } else if (data.currentStatus === "Founder") {
-    affiliationLabel = "Founded Venture";
-    affiliationValue = String(data.startupName || "Unspecified Startup");
-  }
-
-  sendEmail({
-    from:    CANDIDATE_SENDER,
-    to:      String(data.email),
-    subject: "Application Received",
-    html:    renderAppReceivedCandidate({
-      fullName:        String(data.fullName     || ""),
-      currentStatus:   String(data.currentStatus || ""),
-      affiliationLabel,
-      affiliationValue,
-      primaryReason:
-        data.primaryReason === "Other"
-          ? String(data.primaryReasonOther || "Other Purpose")
-          : String(data.primaryReason || ""),
-    }),
-  }).catch((err) => logError("api/applications", `Candidate confirmation email failed applicantEmail=${data.email} applicationId=${docRef.id}`, err));
-
-  sendEmail({
-    from:    ADMIN_SENDER,
-    to:      adminEmail,
-    subject: `[Admissions] New Fellowship Application: ${String(data.fullName || "")}`,
-    html:    renderAppReceivedAdmin({
-      fullName:       String(data.fullName      || ""),
-      email:          String(data.email         || ""),
-      mobileNumber:   String(data.mobileNumber  || ""),
-      city:           String(data.city          || ""),
-      linkedinUrl:    String(data.linkedinUrl   || ""),
-      currentStatus:  String(data.currentStatus || ""),
-      collegeName:    data.collegeName,
-      degree:         data.degree,
-      graduationYear: data.graduationYear,
-      currentRole:    data.currentRole,
-      companyName:    data.companyName,
-      yearsOfExperience:           data.yearsOfExperience,
-      degreeEducationalBackground: data.degreeEducationalBackground,
-      startupName:            data.startupName,
-      industrySector:         data.industrySector,
-      startupLinkedinProfile: data.startupLinkedinProfile,
-      areaOfWork:                data.areaOfWork,
-      freelancerLinkedinProfile: data.freelancerLinkedinProfile,
-      otherStatusSpecify:    data.otherStatusSpecify,
-      primaryReason:         String(data.primaryReason      || ""),
-      primaryReasonOther:    data.primaryReasonOther,
-      discoverySource:       String(data.discoverySource    || ""),
-      discoverySourceOther:  data.discoverySourceOther,
-      resumeUrl:      String(data.resumeLink || data.resumeUrl || ""),
-      assessmentQ1:   String(data.assessmentQ1 || ""),
-      assessmentQ2:   String(data.assessmentQ2 || ""),
-      assessmentQ3:   String(data.assessmentQ3 || ""),
-    }),
-  }).catch((err) => logError("api/applications", `Admin notification email failed adminEmail=${adminEmail} applicationId=${docRef.id}`, err));
-
-  logInfo("api/applications", "POST 201 completed", { applicationId: docRef.id });
-  return NextResponse.json({ success: true, applicationId: docRef.id }, { status: 201, headers });
+  logInfo("api/applications", "POST 201 completed", { applicationId: result.applicationId });
+  return NextResponse.json({ success: true, applicationId: result.applicationId }, { status: 201, headers });
 }
 
 export async function OPTIONS(request: NextRequest) {
