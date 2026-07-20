@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Filter } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { isValidEmail } from "@/lib/validate";
@@ -38,12 +39,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid email address" }, { status: 400, headers });
   }
 
-  const queries: Promise<FirebaseFirestore.QuerySnapshot>[] = [];
-  if (email) queries.push(adminDb.collection("applications").where("email", "==", email).limit(1).get());
-  if (phone) queries.push(adminDb.collection("applications").where("mobileNumber", "==", phone).limit(1).get());
+  const filter =
+    email && phone
+      ? Filter.or(Filter.where("email", "==", email), Filter.where("mobileNumber", "==", phone))
+      : email
+      ? Filter.where("email", "==", email)
+      : Filter.where("mobileNumber", "==", phone as string);
 
-  const snaps = await Promise.all(queries);
-  const alreadyApplied = snaps.some((s) => !s.empty);
+  const snap = await adminDb.collection("applications").where(filter).limit(1).get();
+  const alreadyApplied = !snap.empty;
 
   logInfo("api/applications/check", "Duplicate check completed", { email: email ?? "none", phone: phone ?? "none", alreadyApplied: String(alreadyApplied) });
 

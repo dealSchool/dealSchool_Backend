@@ -3,8 +3,8 @@ import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
-import { logInfo, logWarn } from "@/lib/logger";
-import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { logInfo, logError } from "@/lib/logger";
+import { getClientIp } from "@/lib/rate-limit";
 import { submitApplication } from "@/lib/application-service";
 
 export const runtime = "nodejs";
@@ -75,27 +75,22 @@ export async function POST(request: NextRequest) {
   const ip      = getClientIp(request);
   logInfo("api/applications", "POST received", { ip, origin: origin ?? "none" });
 
-  // Rate limit: 5 submissions per 15 minutes per IP
-  const rl = await checkRateLimit(`apply:${ip}`, 5, 15 * 60 * 1000);
-  if (!rl.allowed) {
-    logWarn("api/applications", "Rate limited", { ip });
-    return NextResponse.json(
-      { error: "Too many requests. Please wait before submitting again." },
-      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
-    );
-  }
-
   let data: any;
   try { data = await request.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }
 
-  const result = await submitApplication(data);
-  if (!result.ok) {
-    return NextResponse.json(result.body, { status: result.status, headers });
-  }
+  try {
+    const result = await submitApplication(data);
+    if (!result.ok) {
+      return NextResponse.json(result.body, { status: result.status, headers });
+    }
 
-  logInfo("api/applications", "POST 201 completed", { applicationId: result.applicationId });
-  return NextResponse.json({ success: true, applicationId: result.applicationId }, { status: 201, headers });
+    logInfo("api/applications", "POST 201 completed", { applicationId: result.applicationId });
+    return NextResponse.json({ success: true, applicationId: result.applicationId }, { status: 201, headers });
+  } catch (err) {
+    logError("api/applications", "POST unhandled error", err);
+    return NextResponse.json({ error: "Internal server error. Please try again." }, { status: 500, headers });
+  }
 }
 
 export async function OPTIONS(request: NextRequest) {

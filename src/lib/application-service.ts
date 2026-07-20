@@ -1,4 +1,4 @@
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Filter } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { sendEmail } from "@/lib/mailer";
 import { logInfo, logError } from "@/lib/logger";
@@ -33,11 +33,15 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
   data.email        = sanitizeHeader(String(data.email)).toLowerCase();
   data.mobileNumber = sanitizeHeader(String(data.mobileNumber));
 
-  const [emailSnap, phoneSnap] = await Promise.all([
-    adminDb.collection("applications").where("email", "==", data.email).limit(1).get(),
-    adminDb.collection("applications").where("mobileNumber", "==", data.mobileNumber).limit(1).get(),
-  ]);
-  if (!emailSnap.empty || !phoneSnap.empty) {
+  const dupSnap = await adminDb
+    .collection("applications")
+    .where(Filter.or(
+      Filter.where("email", "==", data.email),
+      Filter.where("mobileNumber", "==", data.mobileNumber),
+    ))
+    .limit(1)
+    .get();
+  if (!dupSnap.empty) {
     return {
       ok: false,
       status: 409,

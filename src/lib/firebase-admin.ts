@@ -21,4 +21,6 @@ const app =
     : getApps()[0];
 
 export const adminDb = getFirestore(app);
+adminDb.settings({ ignoreUndefinedProperties: true });
+
 export const adminAuth = getAuth(app);

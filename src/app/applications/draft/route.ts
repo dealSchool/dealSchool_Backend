@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, Filter } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
-import { logInfo, logWarn } from "@/lib/logger";
-import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { logInfo, logError } from "@/lib/logger";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 
 export const runtime = "nodejs";
@@ -86,16 +85,6 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
-  const ip      = getClientIp(request);
-
-  const rl = await checkRateLimit(`apply-draft:${ip}`, 20, 15 * 60 * 1000);
-  if (!rl.allowed) {
-    logWarn("api/applications/draft", "Rate limited", { ip });
-    return NextResponse.json(
-      { error: "Too many requests. Please wait before trying again." },
-      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
-    );
-  }
 
   let data: any;
   try { data = await request.json(); }
@@ -117,64 +106,73 @@ export async function POST(request: NextRequest) {
   const city        = sanitizeHeader(String(data.city));
   const linkedinUrl = data.linkedinUrl ? sanitizeHeader(String(data.linkedinUrl)) : "";
 
-  // Someone who already fully applied shouldn't be routed into a fresh draft.
-  const [appEmailSnap, appPhoneSnap] = await Promise.all([
-    adminDb.collection("applications").where("email", "==", email).limit(1).get(),
-    adminDb.collection("applications").where("mobileNumber", "==", mobileNumber).limit(1).get(),
-  ]);
-  if (!appEmailSnap.empty || !appPhoneSnap.empty) {
-    return NextResponse.json({ alreadyApplied: true, error: ALREADY_APPLIED_MSG }, { status: 409, headers });
-  }
-
-  const step1Fields = { fullName, mobileNumber, email, linkedinUrl, city };
-  const draftsRef   = adminDb.collection("applicationDrafts");
-
-  // Runs the existing-draft check and the create/update inside one transaction —
-  // a plain query-then-write here let two near-simultaneous Step 1 submits (double
-  // click, flaky network retry) both see "no existing draft" and both create one,
-  // producing duplicate in_progress drafts for the same phone+email. Firestore
-  // re-validates the query on commit, so a concurrent write forces this to retry
-  // and see the just-created draft instead of creating a second one.
-  const result = await adminDb.runTransaction(async (t) => {
-    const existingQuery = draftsRef
-      .where("mobileNumber", "==", mobileNumber)
-      .where("status", "==", "in_progress")
-      .limit(1);
-    const existingSnap = await t.get(existingQuery);
-
-    if (!existingSnap.empty) {
-      const existingDoc = existingSnap.docs[0];
-      const existing    = existingDoc.data();
-      t.update(existingDoc.ref, {
-        formData:  { ...existing.formData, ...step1Fields },
-        email,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
-      return { draftId: existingDoc.id, currentStep: existing.currentStep as number, resumed: true, isNew: false };
+  try {
+    // Someone who already fully applied shouldn't be routed into a fresh draft.
+    const appDupSnap = await adminDb
+      .collection("applications")
+      .where(Filter.or(
+        Filter.where("email", "==", email),
+        Filter.where("mobileNumber", "==", mobileNumber),
+      ))
+      .limit(1)
+      .get();
+    if (!appDupSnap.empty) {
+      return NextResponse.json({ alreadyApplied: true, error: ALREADY_APPLIED_MSG }, { status: 409, headers });
     }
 
-    const docRef = draftsRef.doc();
-    t.set(docRef, {
-      mobileNumber,
-      email,
-      currentStep: 1,
-      formData:  step1Fields,
-      status:    "in_progress",
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    return { draftId: docRef.id, currentStep: 1, resumed: false, isNew: true };
-  });
+    const step1Fields = { fullName, mobileNumber, email, linkedinUrl, city };
+    const draftsRef   = adminDb.collection("applicationDrafts");
 
-  logInfo(
-    "api/applications/draft",
-    result.isNew ? "Draft created" : "Draft resumed on Step 1 resubmit",
-    { draftId: result.draftId }
-  );
-  return NextResponse.json(
-    { draftId: result.draftId, currentStep: result.currentStep, resumed: result.resumed },
-    { status: result.isNew ? 201 : 200, headers }
-  );
+    // Runs the existing-draft check and the create/update inside one transaction —
+    // a plain query-then-write here let two near-simultaneous Step 1 submits (double
+    // click, flaky network retry) both see "no existing draft" and both create one,
+    // producing duplicate in_progress drafts for the same phone+email. Firestore
+    // re-validates the query on commit, so a concurrent write forces this to retry
+    // and see the just-created draft instead of creating a second one.
+    const result = await adminDb.runTransaction(async (t) => {
+      const existingQuery = draftsRef
+        .where("mobileNumber", "==", mobileNumber)
+        .where("status", "==", "in_progress")
+        .limit(1);
+      const existingSnap = await t.get(existingQuery);
+
+      if (!existingSnap.empty) {
+        const existingDoc = existingSnap.docs[0];
+        const existing    = existingDoc.data();
+        t.update(existingDoc.ref, {
+          formData:  { ...existing.formData, ...step1Fields },
+          email,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        return { draftId: existingDoc.id, currentStep: existing.currentStep as number, resumed: true, isNew: false };
+      }
+
+      const docRef = draftsRef.doc();
+      t.set(docRef, {
+        mobileNumber,
+        email,
+        currentStep: 1,
+        formData:  step1Fields,
+        status:    "in_progress",
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return { draftId: docRef.id, currentStep: 1, resumed: false, isNew: true };
+    });
+
+    logInfo(
+      "api/applications/draft",
+      result.isNew ? "Draft created" : "Draft resumed on Step 1 resubmit",
+      { draftId: result.draftId }
+    );
+    return NextResponse.json(
+      { draftId: result.draftId, currentStep: result.currentStep, resumed: result.resumed },
+      { status: result.isNew ? 201 : 200, headers }
+    );
+  } catch (err) {
+    logError("api/applications/draft", "POST unhandled error", err);
+    return NextResponse.json({ error: "Internal server error. Please try again." }, { status: 500, headers });
+  }
 }
 
 export async function OPTIONS(request: NextRequest) {
