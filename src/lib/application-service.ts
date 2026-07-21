@@ -19,10 +19,14 @@ export type SubmitApplicationResult =
 // (draft finalize) — validation, duplicate check, Firestore write, and notification emails
 // must stay identical between both entry points.
 export async function submitApplication(data: any): Promise<SubmitApplicationResult> {
-  const required = ["fullName", "email", "mobileNumber", "currentStatus"];
+  const required = ["fullName", "email", "mobileNumber", "assessmentQ1", "assessmentQ2", "assessmentQ3"];
   const missing  = required.filter((f) => !data[f]);
   if (missing.length) {
     return { ok: false, status: 400, body: { error: `Missing fields: ${missing.join(", ")}` } };
+  }
+
+  if (data.agreedToTerms !== true) {
+    return { ok: false, status: 400, body: { error: "You must agree to the Terms & Conditions" } };
   }
 
   if (!isValidEmail(String(data.email))) {
@@ -62,6 +66,7 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
     linkedinUrl:   String(data.linkedinUrl   || ""),
     city:          String(data.city          || ""),
     currentStatus: String(data.currentStatus || ""),
+    agreedToTerms: Boolean(data.agreedToTerms),
 
     ...(data.currentStatus === "Student" && {
       collegeName:    data.collegeName,

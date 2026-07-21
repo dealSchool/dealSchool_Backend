@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
 }
 
 // ─── POST /applications/draft — public: create/resume a draft after Step 1 ────
-// Body: { fullName, mobileNumber, email, linkedinUrl?, city }
+// Body: { fullName, mobileNumber, email, linkedinUrl?, city? }
 // Upserts by mobileNumber so re-submitting Step 1 in the same session doesn't
 // create duplicate drafts.
 export async function POST(request: NextRequest) {
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
   try { data = await request.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }
 
-  const required = ["fullName", "mobileNumber", "email", "city"];
+  const required = ["fullName", "mobileNumber", "email"];
   const missing  = required.filter((f) => !data[f]);
   if (missing.length) {
     return NextResponse.json({ error: `Missing fields: ${missing.join(", ")}` }, { status: 400, headers });
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
   const email       = sanitizeHeader(String(data.email)).toLowerCase();
   const mobileNumber = sanitizeHeader(String(data.mobileNumber));
   const fullName    = sanitizeHeader(String(data.fullName));
-  const city        = sanitizeHeader(String(data.city));
+  const city        = data.city ? sanitizeHeader(String(data.city)) : "";
   const linkedinUrl = data.linkedinUrl ? sanitizeHeader(String(data.linkedinUrl)) : "";
 
   try {
