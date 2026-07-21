@@ -15,6 +15,12 @@ const PAGE_SIZE = 50;
 const ALREADY_APPLIED_MSG =
   "You've already applied to DealSchool. Our team will reach out to you shortly. For any queries, contact support@dealschool.in";
 
+// First-page results (list + per-step counts) are hit by dashboard polling
+// far more often than drafts actually change, so they're cached in memory
+// for a short TTL — same pattern as cohort-settings.ts/payment-mode-settings.ts.
+const LIST_CACHE_TTL_MS = 60 * 1000;
+const listCache = new Map<number, { body: unknown; expiresAt: number }>();
+
 // ─── GET /applications/draft — admin: paginated list of abandoned drafts ──────
 export async function GET(request: NextRequest) {
   const origin  = request.headers.get("origin");
@@ -27,6 +33,13 @@ export async function GET(request: NextRequest) {
   const limit       = Math.min(parseInt(searchParams.get("limit") || String(PAGE_SIZE)), 100);
   const after       = searchParams.get("after");
   const isFirstPage = !after;
+
+  if (isFirstPage) {
+    const hit = listCache.get(limit);
+    if (hit && Date.now() < hit.expiresAt) {
+      return NextResponse.json(hit.body, { headers });
+    }
+  }
 
   let query = adminDb
     .collection("applicationDrafts")
@@ -76,7 +89,11 @@ export async function GET(request: NextRequest) {
         step5: (countSnaps[4] as any).data().count }
     : undefined;
 
-  return NextResponse.json({ drafts, hasMore, nextCursor, counts }, { headers });
+  const body = { drafts, hasMore, nextCursor, counts };
+  if (isFirstPage) {
+    listCache.set(limit, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
+  }
+  return NextResponse.json(body, { headers });
 }
 
 // ─── POST /applications/draft — public: create/resume a draft after Step 1 ────

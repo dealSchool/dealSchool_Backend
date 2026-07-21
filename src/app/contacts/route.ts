@@ -16,6 +16,12 @@ const CONTACT_SENDER = "DealSchool HelpDesk <support@dealschool.in>";
 
 const PAGE_SIZE = 50;
 
+// First-page results (list + aggregate counts) are hit by dashboard polling
+// far more often than contacts actually change, so they're cached in memory
+// for a short TTL — same pattern as cohort-settings.ts/payment-mode-settings.ts.
+const LIST_CACHE_TTL_MS = 60 * 1000;
+const listCache = new Map<number, { body: unknown; expiresAt: number }>();
+
 // ─── GET /contacts — admin: paginated list ────────────────────────────────────
 // Query params: ?limit=50&after=<docId>
 // First page response also includes aggregate counts for the dashboard metrics.
@@ -30,6 +36,13 @@ export async function GET(request: NextRequest) {
   const limit      = Math.min(parseInt(searchParams.get("limit") || String(PAGE_SIZE)), 100);
   const after      = searchParams.get("after");
   const isFirstPage = !after;
+
+  if (isFirstPage) {
+    const hit = listCache.get(limit);
+    if (hit && Date.now() < hit.expiresAt) {
+      return NextResponse.json(hit.body, { headers });
+    }
+  }
 
   let query = adminDb
     .collection("contacts")
@@ -64,7 +77,11 @@ export async function GET(request: NextRequest) {
       }
     : undefined;
 
-  return NextResponse.json({ contacts, hasMore, nextCursor, counts }, { headers });
+  const body = { contacts, hasMore, nextCursor, counts };
+  if (isFirstPage) {
+    listCache.set(limit, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
+  }
+  return NextResponse.json(body, { headers });
 }
 
 // ─── POST /contacts — public: submit contact inquiry + send emails ────────────
