@@ -10,10 +10,22 @@ export type PaymentMode = "sandbox" | "live";
 
 const PAYMENT_DOC = adminDb.collection("settings").doc("payment");
 
+// This is read on every Cashfree API call (base URL + auth headers) but
+// changes only when an admin flips the toggle, so it's cached in memory for
+// a short TTL — same pattern as verify-admin.ts's admin-doc cache, which
+// works here because this runs as a persistent Node process, not serverless.
+const CACHE_TTL_MS = 60 * 1000;
+let cached: { mode: PaymentMode; expiresAt: number } | null = null;
+
 export async function getPaymentMode(): Promise<PaymentMode> {
+  if (cached && Date.now() < cached.expiresAt) return cached.mode;
+
   const snap = await PAYMENT_DOC.get();
-  const mode = snap.exists ? snap.data()?.mode : undefined;
-  return mode === "live" ? "live" : "sandbox";
+  const rawMode = snap.exists ? snap.data()?.mode : undefined;
+  const mode: PaymentMode = rawMode === "live" ? "live" : "sandbox";
+
+  cached = { mode, expiresAt: Date.now() + CACHE_TTL_MS };
+  return mode;
 }
 
 export async function setPaymentMode(mode: string): Promise<PaymentMode> {
@@ -24,5 +36,6 @@ export async function setPaymentMode(mode: string): Promise<PaymentMode> {
     { mode, updatedAt: FieldValue.serverTimestamp() },
     { merge: true },
   );
+  cached = { mode, expiresAt: Date.now() + CACHE_TTL_MS };
   return mode;
 }

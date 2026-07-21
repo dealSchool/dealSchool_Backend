@@ -99,11 +99,15 @@ export async function POST(request: NextRequest) {
     const safeMessage = String(message).slice(0, 5000); // cap message length
 
     // Reject duplicate inquiries from the same email within 1 hour.
-    // Uses a single-field equality query only (auto-indexed, no composite index required).
-    // createdAt comparison is done in memory to avoid needing a composite index.
+    // Uses a single-field equality query, ordered newest-first and capped —
+    // only the most recent submission needs checking, so this stays a
+    // constant-cost read regardless of how many times this email has ever
+    // written in (previously unbounded: read every doc for the email, every time).
     const byEmailSnap = await adminDb
       .collection("contacts")
       .where("email", "==", safeEmail)
+      .orderBy("createdAt", "desc")
+      .limit(1)
       .get();
     const oneHourAgo = Date.now() - 60 * 60 * 1000;
     const hasRecentSubmission = byEmailSnap.docs.some((d) => {

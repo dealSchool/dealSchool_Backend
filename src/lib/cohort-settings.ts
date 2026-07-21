@@ -14,7 +14,18 @@ export interface CohortSettings {
   feePaise:  number;
 }
 
+// Read from several hot paths (fee calc on every application/payment,
+// cancel flow) but changes only via an explicit admin PATCH, so it's cached
+// in memory for a short TTL — same pattern as verify-admin.ts's admin-doc
+// cache, which works here because this runs as a persistent Node process,
+// not serverless. Invalidated (rather than patched in place) on writes since
+// the two setters below each touch only one field.
+const CACHE_TTL_MS = 60 * 1000;
+let cached: { settings: CohortSettings; expiresAt: number } | null = null;
+
 export async function getCohortSettings(): Promise<CohortSettings> {
+  if (cached && Date.now() < cached.expiresAt) return cached.settings;
+
   const snap = await COHORT_DOC.get();
   const data = snap.exists ? snap.data() : undefined;
 
@@ -26,7 +37,9 @@ export async function getCohortSettings(): Promise<CohortSettings> {
     ? data.feePaise
     : DEFAULT_FEE_PAISE;
 
-  return { startDate, feePaise };
+  const settings = { startDate, feePaise };
+  cached = { settings, expiresAt: Date.now() + CACHE_TTL_MS };
+  return settings;
 }
 
 export async function setCohortStartDate(dateStr: string): Promise<Date> {
@@ -38,6 +51,7 @@ export async function setCohortStartDate(dateStr: string): Promise<Date> {
     { startDate: Timestamp.fromDate(date), updatedAt: FieldValue.serverTimestamp() },
     { merge: true },
   );
+  cached = null;
   return date;
 }
 
@@ -50,5 +64,6 @@ export async function setCohortFee(feeInRupees: number): Promise<number> {
     { feePaise, updatedAt: FieldValue.serverTimestamp() },
     { merge: true },
   );
+  cached = null;
   return feePaise;
 }
