@@ -3,8 +3,8 @@ import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
-import { logInfo, logError } from "@/lib/logger";
-import { getClientIp } from "@/lib/rate-limit";
+import { logInfo, logWarn, logError } from "@/lib/logger";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { submitApplication } from "@/lib/application-service";
 
 export const runtime = "nodejs";
@@ -74,6 +74,15 @@ export async function POST(request: NextRequest) {
   const headers = corsHeaders(origin);
   const ip      = getClientIp(request);
   logInfo("api/applications", "POST received", { ip, origin: origin ?? "none" });
+
+  const rl = await checkRateLimit(`apply:${ip}`, 5, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    logWarn("api/applications", "Rate limited", { ip });
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before submitting again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+    );
+  }
 
   let data: any;
   try { data = await request.json(); }

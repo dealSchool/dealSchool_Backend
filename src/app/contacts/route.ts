@@ -5,8 +5,8 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
 import { sendEmail } from "@/lib/mailer";
-import { logInfo, logError } from "@/lib/logger";
-import { getClientIp } from "@/lib/rate-limit";
+import { logInfo, logWarn, logError } from "@/lib/logger";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { renderContactInquiryAdmin, renderContactInquiryCandidate } from "@/lib/email-templates";
 
@@ -75,6 +75,16 @@ export async function POST(request: NextRequest) {
   logInfo("api/contacts", "POST received", { ip, origin: origin ?? "none" });
 
   try {
+    // Rate limit: 5 submissions per 15 minutes per IP
+    const rl = await checkRateLimit(`contact:${ip}`, 5, 15 * 60 * 1000);
+    if (!rl.allowed) {
+      logWarn("api/contacts", "Rate limited", { ip });
+      return NextResponse.json(
+        { error: "Too many requests. Please wait before submitting again." },
+        { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+      );
+    }
+
     let data: any;
     try { data = await request.json(); }
     catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }

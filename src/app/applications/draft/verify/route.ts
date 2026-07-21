@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { logInfo, logWarn, logError } from "@/lib/logger";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sanitizeHeader } from "@/lib/validate";
 
 export const runtime = "nodejs";
@@ -12,6 +13,16 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip      = getClientIp(request);
+
+  const ipRl = await checkRateLimit(`apply-draft-verify-ip:${ip}`, 30, 15 * 60 * 1000);
+  if (!ipRl.allowed) {
+    logWarn("api/applications/draft/verify", "IP rate limited", { ip });
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before trying again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(ipRl.retryAfterMs / 1000)) } }
+    );
+  }
 
   let body: any;
   try { body = await request.json(); }
@@ -21,6 +32,15 @@ export async function POST(request: NextRequest) {
   const otp          = body.otp;
   if (!mobileNumber || !otp) {
     return NextResponse.json({ error: "mobileNumber and otp are required" }, { status: 400, headers });
+  }
+
+  // Caps OTP brute-force attempts per phone number (6-digit code = 1,000,000 combos).
+  const otpRl = await checkRateLimit(`apply-draft-verify-phone:${mobileNumber}`, 5, 15 * 60 * 1000);
+  if (!otpRl.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait before trying again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(otpRl.retryAfterMs / 1000)) } }
+    );
   }
 
   try {

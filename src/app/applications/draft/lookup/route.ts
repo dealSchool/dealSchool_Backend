@@ -4,7 +4,8 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { sendEmail } from "@/lib/mailer";
-import { logInfo, logError } from "@/lib/logger";
+import { logInfo, logWarn, logError } from "@/lib/logger";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sanitizeHeader, maskEmail } from "@/lib/validate";
 import { renderDraftOTP } from "@/lib/email-templates";
 
@@ -23,6 +24,16 @@ const ALREADY_APPLIED_MSG =
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip      = getClientIp(request);
+
+  const ipRl = await checkRateLimit(`apply-draft-lookup-ip:${ip}`, 20, 15 * 60 * 1000);
+  if (!ipRl.allowed) {
+    logWarn("api/applications/draft/lookup", "IP rate limited", { ip });
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before trying again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(ipRl.retryAfterMs / 1000)) } }
+    );
+  }
 
   let body: any;
   try { body = await request.json(); }
@@ -31,6 +42,14 @@ export async function POST(request: NextRequest) {
   const mobileNumber = typeof body.mobileNumber === "string" ? sanitizeHeader(body.mobileNumber) : "";
   if (!mobileNumber) {
     return NextResponse.json({ error: "mobileNumber is required" }, { status: 400, headers });
+  }
+
+  const phoneRl = await checkRateLimit(`apply-draft-lookup-phone:${mobileNumber}`, 5, 15 * 60 * 1000);
+  if (!phoneRl.allowed) {
+    return NextResponse.json(
+      { error: "Too many attempts. Please wait before trying again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(phoneRl.retryAfterMs / 1000)) } }
+    );
   }
 
   try {

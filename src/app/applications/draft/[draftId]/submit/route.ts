@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
-import { logInfo, logError } from "@/lib/logger";
+import { logInfo, logWarn, logError } from "@/lib/logger";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { submitApplication } from "@/lib/application-service";
 
 export const runtime = "nodejs";
@@ -14,7 +15,17 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest, { params }: { params: Promise<{ draftId: string }> }) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip      = getClientIp(request);
   const { draftId } = await params;
+
+  const rl = await checkRateLimit(`apply-draft-submit:${ip}`, 5, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    logWarn("api/applications/draft/[draftId]/submit", "Rate limited", { ip });
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before submitting again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+    );
+  }
 
   let finalFields: any;
   try { finalFields = await request.json(); }
