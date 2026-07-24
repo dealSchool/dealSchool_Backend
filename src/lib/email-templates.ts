@@ -447,6 +447,26 @@ ${answerBox(pr.message)}
 ${signature("DealSchool Team")}`);
 }
 
+export interface ContactReplyProps {
+  name: string;
+  subject: string;
+  originalMessage: string;
+  replyMessage: string;
+}
+
+export function renderContactReply(pr: ContactReplyProps): string {
+  return base(`
+${greeting(pr.name)}
+${p("Thanks for reaching out to DealSchool. Here's our response to your query:")}
+${sectionTitle("Our Reply")}
+${answerBox(pr.replyMessage)}
+${sectionTitle("Your Original Message")}
+${field("Subject", pr.subject)}
+${answerBox(pr.originalMessage)}
+${p("If you have any follow-up questions, just reply to this email and we'll be happy to help.", "margin-top:20px;")}
+${signature("DealSchool Support Team")}`);
+}
+
 // ─── Brochure request ─────────────────────────────────────────────────────────
 
 export interface BrochureRequestAdminProps {

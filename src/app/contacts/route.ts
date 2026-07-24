@@ -9,6 +9,7 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { renderContactInquiryAdmin, renderContactInquiryCandidate } from "@/lib/email-templates";
+import { LIST_CACHE_TTL_MS, listCache } from "@/lib/contacts-cache";
 
 export const runtime = "nodejs";
 
@@ -19,8 +20,6 @@ const PAGE_SIZE = 50;
 // First-page results (list + aggregate counts) are hit by dashboard polling
 // far more often than contacts actually change, so they're cached in memory
 // for a short TTL — same pattern as cohort-settings.ts/payment-mode-settings.ts.
-const LIST_CACHE_TTL_MS = 60 * 1000;
-const listCache = new Map<number, { body: unknown; expiresAt: number }>();
 
 // ─── GET /contacts — admin: paginated list ────────────────────────────────────
 // Query params: ?limit=50&after=<docId>
@@ -66,7 +65,19 @@ export async function GET(request: NextRequest) {
 
   const hasMore   = snapshot.docs.length > limit;
   const docs      = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-  const contacts  = docs.map((d) => ({ id: d.id, ...serializeDoc(d.data()) }));
+  // serializeDoc only converts top-level Timestamp fields — replies[].sentAt is
+  // nested inside an array, so it needs its own conversion to stay consistent
+  // with the ISO-string shape the POST /reply endpoint returns.
+  const contacts  = docs.map((d) => {
+    const data = serializeDoc(d.data());
+    if (Array.isArray(data.replies)) {
+      data.replies = data.replies.map((r: any) => ({
+        ...r,
+        sentAt: r?.sentAt?.toDate ? r.sentAt.toDate().toISOString() : r.sentAt,
+      }));
+    }
+    return { id: d.id, ...data };
+  });
   const nextCursor = hasMore ? docs[docs.length - 1].id : null;
 
   const counts = isFirstPage
