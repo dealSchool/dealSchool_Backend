@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { logInfo, logWarn } from "@/lib/logger";
+import { invalidateBrochureRequestsListCache } from "@/lib/brochure-requests-cache";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,7 @@ export async function DELETE(
   }
 
   await docRef.delete();
+  invalidateBrochureRequestsListCache();
   logInfo("api/brochure-requests/[id]", "DELETE 200 — brochure request deleted", { id });
   return NextResponse.json({ success: true }, { headers });
 }

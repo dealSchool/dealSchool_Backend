@@ -9,7 +9,7 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { renderContactInquiryAdmin, renderContactInquiryCandidate } from "@/lib/email-templates";
-import { LIST_CACHE_TTL_MS, listCache } from "@/lib/contacts-cache";
+import { LIST_CACHE_TTL_MS, listCache, invalidateContactsListCache } from "@/lib/contacts-cache";
 
 export const runtime = "nodejs";
 
@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
         adminDb.collection("contacts").where("status", "==", "unread").count().get(),
         adminDb.collection("contacts").where("status", "==", "read").count().get(),
         adminDb.collection("contacts").where("status", "==", "archived").count().get(),
+        adminDb.collection("contacts").where("status", "==", "replied").count().get(),
       ]
     : [];
 
@@ -80,11 +81,15 @@ export async function GET(request: NextRequest) {
   });
   const nextCursor = hasMore ? docs[docs.length - 1].id : null;
 
+  // Every status the "contacts" collection can hold must be counted here —
+  // the admin dashboard sums these into a grand total for its tab badge and
+  // pagination page count, so a missing status silently undercounts both.
   const counts = isFirstPage
     ? {
         unread:   (countSnaps[0] as any).data().count,
         read:     (countSnaps[1] as any).data().count,
         archived: (countSnaps[2] as any).data().count,
+        replied:  (countSnaps[3] as any).data().count,
       }
     : undefined;
 
@@ -171,6 +176,7 @@ export async function POST(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    invalidateContactsListCache();
     const adminEmail = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";
     logInfo("api/contacts", "Contact saved to Firestore", { contactId: docRef.id, senderEmail: safeEmail });
 

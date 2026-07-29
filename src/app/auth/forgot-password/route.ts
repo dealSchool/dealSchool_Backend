@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminAuth } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { sendEmail } from "@/lib/mailer";
-import { logInfo, logError } from "@/lib/logger";
+import { logInfo, logWarn, logError } from "@/lib/logger";
 import { renderAdminPasswordReset } from "@/lib/email-templates";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,16 @@ const ADMIN_SENDER = "DealSchool Admin <support@dealschool.in>";
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip      = getClientIp(request);
+
+  const rl = checkRateLimit(`forgot-password:${ip}`, 5, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    logWarn("api/auth/forgot-password", "Rate limited", { ip });
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before trying again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+    );
+  }
 
   let body: any;
   try { body = await request.json(); }

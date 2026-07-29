@@ -6,18 +6,11 @@ import { serializeDoc } from "@/lib/serialize";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { submitApplication } from "@/lib/application-service";
+import { LIST_CACHE_TTL_MS, listCache } from "@/lib/applications-cache";
 
 export const runtime = "nodejs";
 
 const PAGE_SIZE = 50;
-
-// First-page results (list + aggregate counts) are hit by dashboard polling
-// far more often than the underlying data changes, so they're cached in
-// memory for a short TTL — same pattern as cohort-settings.ts/payment-mode-settings.ts.
-// Keyed by limit since the dashboard calls this with more than one page size
-// (a small "recent N" widget and the full admin table both hit this route).
-const LIST_CACHE_TTL_MS = 60 * 1000;
-const listCache = new Map<number, { body: unknown; expiresAt: number }>();
 
 // ─── GET /applications — admin: paginated list ────────────────────────────────
 // Query params: ?limit=50&after=<docId>
@@ -60,6 +53,7 @@ export async function GET(request: NextRequest) {
         adminDb.collection("applications").where("status", "==", "interview_invited").count().get(),
         adminDb.collection("applications").where("status", "==", "accepted").count().get(),
         adminDb.collection("applications").where("status", "==", "declined").count().get(),
+        adminDb.collection("applications").where("status", "==", "cancelled").count().get(),
       ]
     : [];
 
@@ -70,6 +64,9 @@ export async function GET(request: NextRequest) {
   const applications = docs.map((d) => ({ id: d.id, ...serializeDoc(d.data()) }));
   const nextCursor = hasMore ? docs[docs.length - 1].id : null;
 
+  // Every status the "applications" collection can hold must be counted here —
+  // the admin dashboard sums these into a grand total for its tab badge and
+  // pagination page count, so a missing status silently undercounts both.
   const counts = isFirstPage
     ? {
         pending:           (countSnaps[0] as any).data().count,
@@ -77,6 +74,7 @@ export async function GET(request: NextRequest) {
         interview_invited: (countSnaps[2] as any).data().count,
         accepted:          (countSnaps[3] as any).data().count,
         declined:          (countSnaps[4] as any).data().count,
+        cancelled:         (countSnaps[5] as any).data().count,
       }
     : undefined;
 

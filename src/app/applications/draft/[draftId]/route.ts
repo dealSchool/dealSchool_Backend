@@ -5,6 +5,7 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { invalidateDraftsListCache } from "@/lib/drafts-cache";
 
 export const runtime = "nodejs";
 
@@ -60,6 +61,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       updatedAt:   FieldValue.serverTimestamp(),
     });
 
+    invalidateDraftsListCache();
     logInfo("api/applications/draft/[draftId]", "Draft step saved", { draftId, step });
     return NextResponse.json({ success: true, currentStep }, { headers });
   } catch (err) {
@@ -93,6 +95,7 @@ export async function DELETE(
     }
 
     await docRef.delete();
+    invalidateDraftsListCache();
     logInfo("api/applications/draft/[draftId]", "DELETE 200 — draft deleted", { draftId });
     return NextResponse.json({ success: true }, { headers });
   } catch (err) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { logInfo, logWarn, logError } from "@/lib/logger";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -11,7 +12,19 @@ const FIREBASE_SIGN_IN_URL =
 export async function POST(request: NextRequest) {
   const origin = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip = getClientIp(request);
   logInfo("api/auth/login", "POST received", { origin: origin ?? "none" });
+
+  // Only one admin account exists, making this endpoint a high-value
+  // credential-stuffing/brute-force target — throttle by IP.
+  const rl = checkRateLimit(`login:${ip}`, 10, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    logWarn("api/auth/login", "Rate limited", { ip });
+    return NextResponse.json(
+      { error: "Too many login attempts. Please wait before trying again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+    );
+  }
 
   let email: string, password: string;
   try {

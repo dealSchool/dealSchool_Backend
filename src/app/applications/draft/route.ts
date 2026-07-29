@@ -7,6 +7,7 @@ import { serializeDoc } from "@/lib/serialize";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
+import { LIST_CACHE_TTL_MS, listCache, invalidateDraftsListCache } from "@/lib/drafts-cache";
 
 export const runtime = "nodejs";
 
@@ -14,12 +15,6 @@ const PAGE_SIZE = 50;
 
 const ALREADY_APPLIED_MSG =
   "You've already applied to DealSchool. Our team will reach out to you shortly. For any queries, contact support@dealschool.in";
-
-// First-page results (list + per-step counts) are hit by dashboard polling
-// far more often than drafts actually change, so they're cached in memory
-// for a short TTL — same pattern as cohort-settings.ts/payment-mode-settings.ts.
-const LIST_CACHE_TTL_MS = 60 * 1000;
-const listCache = new Map<number, { body: unknown; expiresAt: number }>();
 
 // ─── GET /applications/draft — admin: paginated list of abandoned drafts ──────
 export async function GET(request: NextRequest) {
@@ -188,6 +183,7 @@ export async function POST(request: NextRequest) {
       return { draftId: docRef.id, currentStep: 1, resumed: false, isNew: true };
     });
 
+    invalidateDraftsListCache();
     logInfo(
       "api/applications/draft",
       result.isNew ? "Draft created" : "Draft resumed on Step 1 resubmit",

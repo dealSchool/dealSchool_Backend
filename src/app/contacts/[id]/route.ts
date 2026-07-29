@@ -5,6 +5,7 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
 import { logInfo, logWarn } from "@/lib/logger";
+import { invalidateContactsListCache } from "@/lib/contacts-cache";
 
 export const runtime = "nodejs";
 
@@ -47,6 +48,7 @@ export async function PATCH(
   delete updatePayload.createdAt;
 
   await docRef.update(updatePayload);
+  invalidateContactsListCache();
   logInfo("api/contacts/[id]", "PATCH 200 — contact updated", { id, fields: Object.keys(body).join(",") });
 
   const prevData = snap.data()!;
@@ -81,6 +83,7 @@ export async function DELETE(
   }
 
   await adminDb.collection("contacts").doc(id).delete();
+  invalidateContactsListCache();
   logInfo("api/contacts/[id]", "DELETE 200 — contact deleted", { id });
   return NextResponse.json({ success: true }, { headers });
 }

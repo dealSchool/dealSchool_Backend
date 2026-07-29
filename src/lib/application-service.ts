@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { sendEmail } from "@/lib/mailer";
 import { logInfo, logError } from "@/lib/logger";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
+import { invalidateApplicationsListCache } from "@/lib/applications-cache";
 import {
   renderAppReceivedCandidate,
   renderAppReceivedAdmin,
@@ -107,6 +108,7 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
   };
 
   await docRef.set(payload);
+  invalidateApplicationsListCache();
   logInfo("application-service", "Application saved to Firestore", { applicationId: docRef.id, email: data.email, currentStatus: data.currentStatus });
 
   const adminEmail = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";

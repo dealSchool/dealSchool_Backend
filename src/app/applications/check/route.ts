@@ -4,6 +4,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { isValidEmail } from "@/lib/validate";
 import { logInfo, logWarn } from "@/lib/logger";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -17,6 +18,19 @@ const ALREADY_APPLIED_MSG =
 export async function POST(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
+  const ip      = getClientIp(request);
+
+  // Unthrottled, this endpoint is an enumeration oracle for applicant
+  // emails/phones — a field-blur check has no legitimate reason to fire
+  // more than a handful of times per visitor.
+  const rl = checkRateLimit(`app-check:${ip}`, 20, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    logWarn("api/applications/check", "Rate limited", { ip });
+    return NextResponse.json(
+      { error: "Too many requests. Please wait before trying again." },
+      { status: 429, headers: { ...headers, "Retry-After": String(Math.ceil(rl.retryAfterMs / 1000)) } }
+    );
+  }
 
   let body: any;
   try { body = await request.json(); }

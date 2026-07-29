@@ -9,18 +9,13 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { renderBrochureRequestAdmin } from "@/lib/email-templates";
+import { LIST_CACHE_TTL_MS, listCache, invalidateBrochureRequestsListCache } from "@/lib/brochure-requests-cache";
 
 export const runtime = "nodejs";
 
 const ADMIN_SENDER = "DealSchool <support@dealschool.in>";
 
 const PAGE_SIZE = 50;
-
-// First-page results (list + total count) are hit by dashboard polling far
-// more often than requests actually change, so they're cached in memory for
-// a short TTL — same pattern as cohort-settings.ts/payment-mode-settings.ts.
-const LIST_CACHE_TTL_MS = 60 * 1000;
-const listCache = new Map<number, { body: unknown; expiresAt: number }>();
 
 // ─── GET /brochure-requests — admin: paginated list ───────────────────────────
 // Query params: ?limit=50&after=<docId>
@@ -144,6 +139,7 @@ export async function POST(request: NextRequest) {
       updatedAt: FieldValue.serverTimestamp(),
     });
 
+    invalidateBrochureRequestsListCache();
     logInfo("api/brochure-requests", "Brochure request saved to Firestore", { requestId: docRef.id, email: safeEmail });
 
     const adminEmail = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";

@@ -5,6 +5,7 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { submitApplication } from "@/lib/application-service";
+import { invalidateDraftsListCache } from "@/lib/drafts-cache";
 
 export const runtime = "nodejs";
 
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       updatedAt:     FieldValue.serverTimestamp(),
     });
 
+    invalidateDraftsListCache();
     logInfo("api/applications/draft/[draftId]/submit", "Draft finalized into application", { draftId, applicationId: result.applicationId });
     return NextResponse.json({ success: true, applicationId: result.applicationId }, { status: 201, headers });
   } catch (err) {

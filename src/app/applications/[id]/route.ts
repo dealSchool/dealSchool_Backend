@@ -14,6 +14,7 @@ import {
   renderAppDeclined,
   renderPaymentLinkEmail,
 } from "@/lib/email-templates";
+import { invalidateApplicationsListCache } from "@/lib/applications-cache";
 
 export const runtime = "nodejs";
 
@@ -207,6 +208,7 @@ export async function PATCH(
       return adminDb.collection("payments").doc(id).update({ emailSentAt: FieldValue.serverTimestamp() });
     }).catch((err) => logError("api/applications/[id]", `Payment-link email FAILED id=${id} applicantEmail=${prevData.email}`, err));
 
+    invalidateApplicationsListCache();
     const updated = await docRef.get();
     logInfo("api/applications/[id]", "PATCH 200 — application accepted", { id });
     return NextResponse.json(
@@ -217,6 +219,7 @@ export async function PATCH(
 
   // ── All other status changes ──────────────────────────────────────────────────
   await docRef.update(updatePayload);
+  invalidateApplicationsListCache();
   logInfo("api/applications/[id]", "Firestore updated", { id, newStatus, prevStatus });
 
   if (newStatus && newStatus !== prevStatus) {
@@ -328,6 +331,7 @@ export async function DELETE(
     batch.delete(adminDb.collection("payments").doc(id));
   }
   await batch.commit();
+  invalidateApplicationsListCache();
 
   console.log(
     `[delete] Application ${id} deleted by admin` +

@@ -9,6 +9,7 @@ import { getCohortSettings } from "@/lib/cohort-settings";
 import { computeRefundTier } from "@/lib/refund-service";
 import { sendEmail } from "@/lib/mailer";
 import { logInfo, logWarn, logError } from "@/lib/logger";
+import { invalidateApplicationsListCache } from "@/lib/applications-cache";
 import {
   renderCancellationNoRefundEmail,
   renderRefundInitiatedEmail,
@@ -110,6 +111,7 @@ export async function POST(
       return NextResponse.json({ error: "Application is already cancelled" }, { status: 409, headers });
     }
 
+    invalidateApplicationsListCache();
     logInfo("api/applications/[id]/cancel", "Application cancelled (no payment on file)", { id });
     const updated = await appRef.get();
     return NextResponse.json(
@@ -157,6 +159,8 @@ export async function POST(
     if (!didCancel) {
       return NextResponse.json({ error: "Application is already cancelled" }, { status: 409, headers });
     }
+
+    invalidateApplicationsListCache();
 
     if (appData.email) {
       sendEmail({
@@ -251,6 +255,7 @@ export async function POST(
     });
   });
 
+  invalidateApplicationsListCache();
   logInfo("api/applications/[id]/cancel", "Refund initiated with Cashfree", {
     id, refundId, refundAmountPaise: String(refundAmountPaise),
   });
