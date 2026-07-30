@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
@@ -34,98 +35,21 @@ const PAYMENT_STATUS_LABELS: Record<string, string> = {
 // forever — same heuristic used by GET /applications/draft to label it.
 const ABANDONED_AFTER_MS = 24 * 60 * 60 * 1000; // 24h since last step saved
 
-const COLUMNS = [
-  "recordType",
-  "id",
-  "stage",
-  "currentStep",
-  "fullName",
-  "email",
-  "mobileNumber",
-  "linkedinUrl",
-  "city",
-  "occupationStatus",
-  "collegeName",
-  "degree",
-  "graduationYear",
-  "currentRole",
-  "companyName",
-  "yearsOfExperience",
-  "degreeEducationalBackground",
-  "startupName",
-  "industrySector",
-  "startupLinkedinProfile",
-  "areaOfWork",
-  "freelancerLinkedinProfile",
-  "otherStatusSpecify",
-  "primaryReason",
-  "primaryReasonOther",
-  "assessmentQ1",
-  "assessmentQ2",
-  "assessmentQ3",
-  "resumeUrl",
-  "discoverySource",
-  "discoverySourceOther",
-  "agreedToTerms",
-  "paymentStatus",
-  "paymentAmountInr",
-  "paidAt",
-  "refundPercent",
-  "cancellationReason",
-  "cancelledAt",
-  "applicationId",
-  "createdAt",
-  "updatedAt",
-] as const;
+// Rows are flushed to the client in chunks of this many lines instead of one
+// at a time — cuts down on stream-controller overhead for large exports
+// without holding more than a small, fixed window of rows in memory.
+const STREAM_BATCH_SIZE = 250;
 
-type Row = Record<(typeof COLUMNS)[number], string>;
-
-function blankRow(): Row {
-  const row = {} as Row;
-  for (const col of COLUMNS) row[col] = "";
-  return row;
-}
-
-// Fields shared by both a submitted application (top-level) and an in-progress
-// draft (nested under formData) — pulled from whichever source is passed in so
-// the row-building logic below doesn't have to special-case each collection.
-function applyApplicantFields(row: Row, data: Record<string, any>) {
-  row.fullName                     = String(data.fullName ?? "");
-  row.email                        = String(data.email ?? "");
-  row.mobileNumber                 = String(data.mobileNumber ?? "");
-  row.linkedinUrl                  = String(data.linkedinUrl ?? "");
-  row.city                         = String(data.city ?? "");
-  row.occupationStatus             = String(data.currentStatus ?? "");
-  row.collegeName                  = String(data.collegeName ?? "");
-  row.degree                       = String(data.degree ?? "");
-  row.graduationYear               = String(data.graduationYear ?? "");
-  row.currentRole                  = String(data.currentRole ?? "");
-  row.companyName                  = String(data.companyName ?? "");
-  row.yearsOfExperience             = String(data.yearsOfExperience ?? "");
-  row.degreeEducationalBackground  = String(data.degreeEducationalBackground ?? "");
-  row.startupName                  = String(data.startupName ?? "");
-  row.industrySector               = String(data.industrySector ?? "");
-  row.startupLinkedinProfile       = String(data.startupLinkedinProfile ?? "");
-  row.areaOfWork                   = String(data.areaOfWork ?? "");
-  row.freelancerLinkedinProfile    = String(data.freelancerLinkedinProfile ?? "");
-  row.otherStatusSpecify           = String(data.otherStatusSpecify ?? "");
-  row.primaryReason                = String(data.primaryReason ?? "");
-  row.primaryReasonOther           = String(data.primaryReasonOther ?? "");
-  row.assessmentQ1                 = String(data.assessmentQ1 ?? "");
-  row.assessmentQ2                 = String(data.assessmentQ2 ?? "");
-  row.assessmentQ3                 = String(data.assessmentQ3 ?? "");
-  row.resumeUrl                    = String(data.resumeUrl || data.resumeLink || "");
-  row.discoverySource              = String(data.discoverySource ?? "");
-  row.discoverySourceOther         = String(data.discoverySourceOther ?? "");
-  row.agreedToTerms                = data.agreedToTerms === true ? "true" : "false";
+function capitalize(value: string): string {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
 // Every text field here can come straight from an unauthenticated public
-// applicant (fullName, assessmentQ1-3, resumeUrl, etc. have no character
-// restrictions). A value starting with =, +, -, or @ is executed as a formula
-// by Excel/Sheets when the admin opens this file — e.g. an applicant entering
-// `=HYPERLINK("http://evil.com","x")` as their name. Prefix with a single
-// quote to force those apps to treat the cell as plain text (OWASP CSV
+// applicant/visitor (name, message, assessment answers, resume URL, etc. have
+// no character restrictions). A value starting with =, +, -, or @ is executed
+// as a formula by Excel/Sheets when the admin opens this file — e.g. someone
+// entering `=HYPERLINK("http://evil.com","x")` as their name. Prefix with a
+// single quote to force those apps to treat the cell as plain text (OWASP CSV
 // injection mitigation); the quote is invisible in the rendered cell.
 function neutralizeFormula(value: string): string {
   return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
@@ -139,19 +63,256 @@ function toCsvCell(rawValue: string): string {
   return value;
 }
 
-function toCsv(rows: Row[]): string {
-  const header = COLUMNS.join(",");
-  const lines  = rows.map((row) => COLUMNS.map((col) => toCsvCell(row[col])).join(","));
-  return [header, ...lines].join("\r\n");
+function csvLine(values: string[]): string {
+  return values.map(toCsvCell).join(",");
 }
 
-// ─── GET /applications/export — admin: full CSV export of every applicant ─────
-// Covers both the "applications" collection (fully submitted, tracked through
-// pending -> under_review -> interview_invited -> accepted/declined/cancelled,
-// plus payment/refund status) and the "applicationDrafts" collection (Step 1-5
-// in-progress or abandoned, never finalized). A draft that WAS finalized is
-// skipped here — its full data already appears as an "applications" row via
-// submitApplication(), so including both would duplicate the same person.
+// Fields shared by both a submitted application (top-level) and an in-progress
+// draft (nested under formData) — order here must match the tail shared by
+// both APPLICATION_COLUMNS and DRAFT_COLUMNS below.
+function applicantCoreValues(data: Record<string, any>): string[] {
+  return [
+    String(data.fullName ?? ""),
+    String(data.email ?? ""),
+    String(data.mobileNumber ?? ""),
+    String(data.linkedinUrl ?? ""),
+    String(data.city ?? ""),
+    String(data.currentStatus ?? ""),
+    String(data.collegeName ?? ""),
+    String(data.degree ?? ""),
+    String(data.graduationYear ?? ""),
+    String(data.currentRole ?? ""),
+    String(data.companyName ?? ""),
+    String(data.yearsOfExperience ?? ""),
+    String(data.degreeEducationalBackground ?? ""),
+    String(data.startupName ?? ""),
+    String(data.industrySector ?? ""),
+    String(data.startupLinkedinProfile ?? ""),
+    String(data.areaOfWork ?? ""),
+    String(data.freelancerLinkedinProfile ?? ""),
+    String(data.otherStatusSpecify ?? ""),
+    String(data.primaryReason ?? ""),
+    String(data.primaryReasonOther ?? ""),
+    String(data.assessmentQ1 ?? ""),
+    String(data.assessmentQ2 ?? ""),
+    String(data.assessmentQ3 ?? ""),
+    String(data.resumeUrl || data.resumeLink || ""),
+    String(data.discoverySource ?? ""),
+    String(data.discoverySourceOther ?? ""),
+  ];
+}
+
+const APPLICANT_CORE_COLUMNS = [
+  "fullName", "email", "mobileNumber", "linkedinUrl", "city", "occupationStatus",
+  "collegeName", "degree", "graduationYear", "currentRole", "companyName",
+  "yearsOfExperience", "degreeEducationalBackground", "startupName", "industrySector",
+  "startupLinkedinProfile", "areaOfWork", "freelancerLinkedinProfile", "otherStatusSpecify",
+  "primaryReason", "primaryReasonOther", "assessmentQ1", "assessmentQ2", "assessmentQ3",
+  "resumeUrl", "discoverySource", "discoverySourceOther",
+];
+
+const APPLICATION_COLUMNS = [
+  "id", "stage", ...APPLICANT_CORE_COLUMNS,
+  "agreedToTerms", "paymentStatus", "paymentAmountInr", "paidAt",
+  "refundPercent", "cancellationReason", "cancelledAt", "createdAt", "updatedAt",
+];
+
+const DRAFT_COLUMNS = [
+  "id", "stage", "currentStep", ...APPLICANT_CORE_COLUMNS, "createdAt", "updatedAt",
+];
+
+const CONTACT_COLUMNS = [
+  "id", "status", "name", "email", "subject", "message",
+  "replyCount", "repliesSummary", "createdAt", "updatedAt",
+];
+
+const BROCHURE_COLUMNS = [
+  "id", "name", "email", "contact", "city", "ip", "createdAt", "updatedAt",
+];
+
+// Casts a Firestore Query.stream() (typed as NodeJS.ReadableStream) to the
+// async-iterable shape it actually emits — QueryDocumentSnapshot per item —
+// so it can be consumed with `for await`.
+function asDocStream(stream: NodeJS.ReadableStream): AsyncIterable<QueryDocumentSnapshot> {
+  return stream as unknown as AsyncIterable<QueryDocumentSnapshot>;
+}
+
+// Streams every row of every section as one line each. Firestore's
+// `.stream()` (rather than `.get()`) is what keeps this memory-bounded — it
+// pulls documents from Firestore incrementally instead of buffering the
+// entire collection, so a collection with tens of thousands of docs doesn't
+// balloon server memory or block on one giant round trip.
+async function* generateRows(
+  paymentsById: Map<string, Record<string, any>>
+): AsyncGenerator<string> {
+  let appCount = 0, draftCount = 0, contactCount = 0, brochureCount = 0;
+
+  // ── SECTION 1: Submitted applications ──────────────────────────────────────
+  yield "SECTION 1 - SUBMITTED APPLICATIONS";
+  yield APPLICATION_COLUMNS.join(",");
+  const appStream = adminDb.collection("applications").orderBy("createdAt", "desc").stream();
+  for await (const doc of asDocStream(appStream)) {
+    const data    = serializeDoc(doc.data());
+    const payment = paymentsById.get(doc.id);
+    const paymentStatus = String(data.paymentStatus ?? payment?.status ?? "");
+
+    yield csvLine([
+      doc.id,
+      APPLICATION_STATUS_LABELS[String(data.status)] || String(data.status ?? ""),
+      ...applicantCoreValues(data),
+      data.agreedToTerms === true ? "true" : "false",
+      PAYMENT_STATUS_LABELS[paymentStatus] || paymentStatus,
+      payment?.amount != null ? String(payment.amount / 100) : "",
+      String(data.paidAt ?? payment?.paidAt ?? ""),
+      data.refundPercent != null ? String(data.refundPercent) : "",
+      String(data.cancellationReason ?? ""),
+      String(data.cancelledAt ?? ""),
+      String(data.createdAt ?? ""),
+      String(data.updatedAt ?? ""),
+    ]);
+    appCount++;
+  }
+  yield "";
+
+  // ── SECTION 2: In-progress / abandoned drafts (never finalized) ────────────
+  yield "SECTION 2 - IN PROGRESS OR ABANDONED APPLICATIONS (DRAFTS)";
+  yield DRAFT_COLUMNS.join(",");
+  const now = Date.now();
+  const draftStream = adminDb.collection("applicationDrafts").orderBy("updatedAt", "desc").stream();
+  for await (const doc of asDocStream(draftStream)) {
+    const data = serializeDoc(doc.data());
+    if (data.status === "submitted") continue; // already represented in Section 1
+
+    const updatedAt   = data.updatedAt ? new Date(data.updatedAt).getTime() : now;
+    const isAbandoned = now - updatedAt > ABANDONED_AFTER_MS;
+    const step        = Number(data.currentStep) || 1;
+
+    yield csvLine([
+      doc.id,
+      isAbandoned ? "Abandoned" : "In Progress",
+      `Step ${step} of 5`,
+      ...applicantCoreValues({ ...data.formData, email: data.email, mobileNumber: data.mobileNumber }),
+      String(data.createdAt ?? ""),
+      String(data.updatedAt ?? ""),
+    ]);
+    draftCount++;
+  }
+  yield "";
+
+  // ── SECTION 3: Contact messages ─────────────────────────────────────────────
+  yield "SECTION 3 - CONTACT MESSAGES";
+  yield CONTACT_COLUMNS.join(",");
+  const contactStream = adminDb.collection("contacts").orderBy("createdAt", "desc").stream();
+  for await (const doc of asDocStream(contactStream)) {
+    const data = serializeDoc(doc.data());
+    // replies[].sentAt is a Timestamp nested inside an array — serializeDoc only
+    // converts top-level fields, so it needs its own conversion here.
+    const replies = Array.isArray(data.replies)
+      ? data.replies.map((r: any) => ({
+          ...r,
+          sentAt: r?.sentAt?.toDate ? r.sentAt.toDate().toISOString() : r.sentAt,
+        }))
+      : [];
+    const repliesSummary = replies
+      .map((r: any) => `[${r.sentAt || ""} by ${r.repliedBy || ""}] ${r.message || ""}`)
+      .join(" || ");
+
+    yield csvLine([
+      doc.id,
+      capitalize(String(data.status ?? "")),
+      String(data.name ?? ""),
+      String(data.email ?? ""),
+      String(data.subject ?? ""),
+      String(data.message ?? ""),
+      String(replies.length),
+      repliesSummary,
+      String(data.createdAt ?? ""),
+      String(data.updatedAt ?? ""),
+    ]);
+    contactCount++;
+  }
+  yield "";
+
+  // ── SECTION 4: Brochure requests ────────────────────────────────────────────
+  yield "SECTION 4 - BROCHURE REQUESTS";
+  yield BROCHURE_COLUMNS.join(",");
+  const brochureStream = adminDb.collection("brochureRequests").orderBy("createdAt", "desc").stream();
+  for await (const doc of asDocStream(brochureStream)) {
+    const data = serializeDoc(doc.data());
+
+    yield csvLine([
+      doc.id,
+      String(data.name ?? ""),
+      String(data.email ?? ""),
+      String(data.contact ?? ""),
+      String(data.city ?? ""),
+      String(data.ip ?? ""),
+      String(data.createdAt ?? ""),
+      String(data.updatedAt ?? ""),
+    ]);
+    brochureCount++;
+  }
+
+  logInfo("api/applications/export", "CSV export completed", {
+    applications: String(appCount),
+    drafts:       String(draftCount),
+    contacts:     String(contactCount),
+    brochures:    String(brochureCount),
+  });
+}
+
+// Groups individual CSV lines into larger chunks before they're handed to the
+// HTTP stream — cuts the number of controller.enqueue() calls for very large
+// exports while still never holding more than STREAM_BATCH_SIZE lines at once.
+async function* batchLines(lines: AsyncGenerator<string>, batchSize: number): AsyncGenerator<string> {
+  let buffer: string[] = [];
+  for await (const line of lines) {
+    buffer.push(line);
+    if (buffer.length >= batchSize) {
+      yield buffer.join("\r\n") + "\r\n";
+      buffer = [];
+    }
+  }
+  if (buffer.length) yield buffer.join("\r\n") + "\r\n";
+}
+
+// Bridges the async generator to a Web ReadableStream — pull() is only called
+// when the consumer (the HTTP response, ultimately the client's download) is
+// ready for more, so this is backpressure-aware end to end: client readiness
+// gates our generator, which gates Firestore's own internal stream pacing.
+function toResponseStream(lines: AsyncGenerator<string>): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await lines.next();
+        if (done) { controller.close(); return; }
+        controller.enqueue(encoder.encode(value));
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    async cancel() {
+      await lines.return(undefined);
+    },
+  });
+}
+
+// ─── GET /applications/export — admin: full CSV export, 4 sections ────────────
+// Section 1 — fully submitted applications, tracked through
+//   pending -> under_review -> interview_invited -> accepted/declined/cancelled,
+//   plus payment/refund status.
+// Section 2 — "applicationDrafts" that were never finalized: Step 1-5
+//   in-progress or abandoned (24h+ inactive). A draft that WAS finalized is
+//   skipped — its full data already appears in Section 1.
+// Section 3 — every contact/message inquiry, including all admin replies.
+// Section 4 — every brochure download request.
+//
+// The whole response streams row-by-row (Firestore `.stream()` + a Web
+// ReadableStream) rather than loading each collection into memory and
+// building one giant string — memory stays bounded regardless of how many
+// rows exist, and the client starts receiving data immediately instead of
+// waiting for the entire export to finish server-side first.
 export async function GET(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
@@ -160,77 +321,23 @@ export async function GET(request: NextRequest) {
   catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers }); }
 
   try {
-    const [applicationsSnap, draftsSnap, paymentsSnap] = await Promise.all([
-      adminDb.collection("applications").orderBy("createdAt", "desc").get(),
-      adminDb.collection("applicationDrafts").orderBy("updatedAt", "desc").get(),
-      adminDb.collection("payments").get(),
-    ]);
-
+    // Payments are only ever created for applications that reached "accepted" —
+    // a small, bounded subset of all applicants — so loading this one
+    // collection up front (rather than streaming it) is cheap and keeps the
+    // per-application join simple. This read also happens BEFORE the response
+    // is created, so a failure here still returns a normal error status; once
+    // the stream below starts, headers are already committed and errors can
+    // only end the stream early, not change the HTTP status.
+    const paymentsSnap = await adminDb.collection("payments").get();
     const paymentsById = new Map<string, Record<string, any>>();
     for (const doc of paymentsSnap.docs) {
       paymentsById.set(doc.id, serializeDoc(doc.data()));
     }
 
-    const rows: Row[] = [];
+    const body = toResponseStream(batchLines(generateRows(paymentsById), STREAM_BATCH_SIZE));
+    const filename = `dealschool-export-${new Date().toISOString().slice(0, 10)}.csv`;
 
-    // ── Fully submitted applications ──────────────────────────────────────────
-    for (const doc of applicationsSnap.docs) {
-      const data    = serializeDoc(doc.data());
-      const payment = paymentsById.get(doc.id);
-      const row     = blankRow();
-
-      row.recordType   = "Application";
-      row.id           = doc.id;
-      row.applicationId = doc.id;
-      row.stage        = APPLICATION_STATUS_LABELS[String(data.status)] || String(data.status ?? "");
-      row.currentStep  = "Submitted";
-      applyApplicantFields(row, data);
-
-      const paymentStatus = String(data.paymentStatus ?? payment?.status ?? "");
-      row.paymentStatus     = PAYMENT_STATUS_LABELS[paymentStatus] || paymentStatus;
-      row.paymentAmountInr  = payment?.amount != null ? String(payment.amount / 100) : "";
-      row.paidAt            = String(data.paidAt ?? payment?.paidAt ?? "");
-      row.refundPercent     = data.refundPercent != null ? String(data.refundPercent) : "";
-      row.cancellationReason = String(data.cancellationReason ?? "");
-      row.cancelledAt       = String(data.cancelledAt ?? "");
-      row.createdAt         = String(data.createdAt ?? "");
-      row.updatedAt         = String(data.updatedAt ?? "");
-
-      rows.push(row);
-    }
-
-    // ── In-progress / abandoned drafts (never finalized) ──────────────────────
-    const now = Date.now();
-    for (const doc of draftsSnap.docs) {
-      const data = serializeDoc(doc.data());
-      if (data.status === "submitted") continue; // already represented above
-
-      const updatedAt   = data.updatedAt ? new Date(data.updatedAt).getTime() : now;
-      const isAbandoned = now - updatedAt > ABANDONED_AFTER_MS;
-      const step        = Number(data.currentStep) || 1;
-
-      const row = blankRow();
-      row.recordType  = "Draft";
-      row.id          = doc.id;
-      row.stage       = isAbandoned ? "Abandoned" : "In Progress";
-      row.currentStep = `Step ${step} of 5`;
-      applyApplicantFields(row, { ...data.formData, email: data.email, mobileNumber: data.mobileNumber });
-      row.createdAt = String(data.createdAt ?? "");
-      row.updatedAt = String(data.updatedAt ?? "");
-
-      rows.push(row);
-    }
-
-    const csv = toCsv(rows);
-    const filename = `applicants-export-${new Date().toISOString().slice(0, 10)}.csv`;
-
-    logInfo("api/applications/export", "CSV export generated", {
-      applications: String(applicationsSnap.size),
-      drafts:       String(rows.length - applicationsSnap.size),
-      total:        String(rows.length),
-    });
-
-    return new NextResponse(csv, {
+    return new NextResponse(body, {
       status: 200,
       headers: {
         ...headers,
