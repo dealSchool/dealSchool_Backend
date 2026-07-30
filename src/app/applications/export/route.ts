@@ -137,11 +137,44 @@ function asDocStream(stream: NodeJS.ReadableStream): AsyncIterable<QueryDocument
   return stream as unknown as AsyncIterable<QueryDocumentSnapshot>;
 }
 
-// Streams every row of every section as one line each. Firestore's
-// `.stream()` (rather than `.get()`) is what keeps this memory-bounded — it
-// pulls documents from Firestore incrementally instead of buffering the
-// entire collection, so a collection with tens of thousands of docs doesn't
-// balloon server memory or block on one giant round trip.
+// A missing/unparseable date sorts as 0 (oldest) rather than being excluded —
+// unlike Firestore's own orderBy(), this never drops a row for lacking the field.
+function toSortKey(value: unknown): number {
+  if (!value) return 0;
+  const t = new Date(String(value)).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+// Reads a whole section via Query.stream() (still memory-bounded on the
+// Firestore-fetch side — nothing blocks on one giant round trip) and buffers
+// only the small, already-rendered CSV lines (not raw documents) so they can
+// be sorted newest-first before being handed off — restores the ordering
+// every other admin list view already has, without the completeness risk of
+// an orderBy() on a field some documents don't have. At this app's realistic
+// scale (hundreds to low thousands of rows per section) this buffer is a
+// trivial amount of memory; each section still starts flushing to the client
+// as soon as ITS OWN documents have been read, not after the whole export.
+async function collectSorted(
+  stream: AsyncIterable<QueryDocumentSnapshot>,
+  buildRow: (doc: QueryDocumentSnapshot) => { sortKey: number; line: string } | null
+): Promise<string[]> {
+  const rows: { sortKey: number; line: string }[] = [];
+  for await (const doc of stream) {
+    const row = buildRow(doc);
+    if (row) rows.push(row);
+  }
+  rows.sort((a, b) => b.sortKey - a.sortKey); // newest first; missing dates (key 0) sort last
+  return rows.map((r) => r.line);
+}
+
+// Produces every section's CSV lines, section by section. Each section reads
+// its collection via Query.stream() (Firestore-side incremental fetch, no
+// single giant round trip) and buffers only the small rendered lines — not
+// raw documents — long enough to sort them newest-first; see collectSorted().
+// A section's rows are only handed to the HTTP stream once that section's
+// own collection has been fully read, but sections themselves are still
+// produced one at a time rather than the whole export waiting to finish
+// before anything is sent to the client.
 async function* generateRows(
   paymentsById: Map<string, Record<string, any>>
 ): AsyncGenerator<string> {
@@ -150,13 +183,18 @@ async function* generateRows(
   // ── SECTION 1: Submitted applications ──────────────────────────────────────
   yield "SECTION 1 - SUBMITTED APPLICATIONS";
   yield APPLICATION_COLUMNS.join(",");
-  const appStream = adminDb.collection("applications").orderBy("createdAt", "desc").stream();
-  for await (const doc of asDocStream(appStream)) {
+  // No .orderBy() here deliberately — Firestore silently excludes any document
+  // missing the sort field from an orderBy query's results (confirmed: 2 stray
+  // application docs with no `createdAt` field were invisible to an
+  // orderBy("createdAt") query even though .count() saw them). Sorting is done
+  // in-memory below instead, after every document is guaranteed to be read.
+  const appStream = adminDb.collection("applications").stream();
+  const appLines = await collectSorted(asDocStream(appStream), (doc) => {
     const data    = serializeDoc(doc.data());
     const payment = paymentsById.get(doc.id);
     const paymentStatus = String(data.paymentStatus ?? payment?.status ?? "");
 
-    yield csvLine([
+    const line = csvLine([
       doc.id,
       APPLICATION_STATUS_LABELS[String(data.status)] || String(data.status ?? ""),
       ...applicantCoreValues(data),
@@ -170,24 +208,28 @@ async function* generateRows(
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
     ]);
-    appCount++;
-  }
+    return { sortKey: toSortKey(data.createdAt), line };
+  });
+  for (const line of appLines) yield line;
+  appCount = appLines.length;
   yield "";
 
   // ── SECTION 2: In-progress / abandoned drafts (never finalized) ────────────
   yield "SECTION 2 - IN PROGRESS OR ABANDONED APPLICATIONS (DRAFTS)";
   yield DRAFT_COLUMNS.join(",");
   const now = Date.now();
-  const draftStream = adminDb.collection("applicationDrafts").orderBy("updatedAt", "desc").stream();
-  for await (const doc of asDocStream(draftStream)) {
+  // No .orderBy() here either, for the same reason — a draft missing
+  // `updatedAt` would otherwise be silently dropped from the export.
+  const draftStream = adminDb.collection("applicationDrafts").stream();
+  const draftLines = await collectSorted(asDocStream(draftStream), (doc) => {
     const data = serializeDoc(doc.data());
-    if (data.status === "submitted") continue; // already represented in Section 1
+    if (data.status === "submitted") return null; // already represented in Section 1
 
-    const updatedAt   = data.updatedAt ? new Date(data.updatedAt).getTime() : now;
-    const isAbandoned = now - updatedAt > ABANDONED_AFTER_MS;
+    const updatedAtMs = data.updatedAt ? new Date(data.updatedAt).getTime() : now;
+    const isAbandoned = now - updatedAtMs > ABANDONED_AFTER_MS;
     const step        = Number(data.currentStep) || 1;
 
-    yield csvLine([
+    const line = csvLine([
       doc.id,
       isAbandoned ? "Abandoned" : "In Progress",
       `Step ${step} of 5`,
@@ -195,15 +237,18 @@ async function* generateRows(
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
     ]);
-    draftCount++;
-  }
+    return { sortKey: toSortKey(data.updatedAt), line };
+  });
+  for (const line of draftLines) yield line;
+  draftCount = draftLines.length;
   yield "";
 
   // ── SECTION 3: Contact messages ─────────────────────────────────────────────
   yield "SECTION 3 - CONTACT MESSAGES";
   yield CONTACT_COLUMNS.join(",");
-  const contactStream = adminDb.collection("contacts").orderBy("createdAt", "desc").stream();
-  for await (const doc of asDocStream(contactStream)) {
+  // No .orderBy() — same completeness reason as Section 1.
+  const contactStream = adminDb.collection("contacts").stream();
+  const contactLines = await collectSorted(asDocStream(contactStream), (doc) => {
     const data = serializeDoc(doc.data());
     // replies[].sentAt is a Timestamp nested inside an array — serializeDoc only
     // converts top-level fields, so it needs its own conversion here.
@@ -217,7 +262,7 @@ async function* generateRows(
       .map((r: any) => `[${r.sentAt || ""} by ${r.repliedBy || ""}] ${r.message || ""}`)
       .join(" || ");
 
-    yield csvLine([
+    const line = csvLine([
       doc.id,
       capitalize(String(data.status ?? "")),
       String(data.name ?? ""),
@@ -229,18 +274,20 @@ async function* generateRows(
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
     ]);
-    contactCount++;
-  }
+    return { sortKey: toSortKey(data.createdAt), line };
+  });
+  for (const line of contactLines) yield line;
+  contactCount = contactLines.length;
   yield "";
 
   // ── SECTION 4: Brochure requests ────────────────────────────────────────────
   yield "SECTION 4 - BROCHURE REQUESTS";
   yield BROCHURE_COLUMNS.join(",");
-  const brochureStream = adminDb.collection("brochureRequests").orderBy("createdAt", "desc").stream();
-  for await (const doc of asDocStream(brochureStream)) {
+  // No .orderBy() — same completeness reason as Section 1.
+  const brochureStream = adminDb.collection("brochureRequests").stream();
+  const brochureLines = await collectSorted(asDocStream(brochureStream), (doc) => {
     const data = serializeDoc(doc.data());
-
-    yield csvLine([
+    const line = csvLine([
       doc.id,
       String(data.name ?? ""),
       String(data.email ?? ""),
@@ -250,8 +297,10 @@ async function* generateRows(
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
     ]);
-    brochureCount++;
-  }
+    return { sortKey: toSortKey(data.createdAt), line };
+  });
+  for (const line of brochureLines) yield line;
+  brochureCount = brochureLines.length;
 
   logInfo("api/applications/export", "CSV export completed", {
     applications: String(appCount),
@@ -308,11 +357,12 @@ function toResponseStream(lines: AsyncGenerator<string>): ReadableStream<Uint8Ar
 // Section 3 — every contact/message inquiry, including all admin replies.
 // Section 4 — every brochure download request.
 //
-// The whole response streams row-by-row (Firestore `.stream()` + a Web
-// ReadableStream) rather than loading each collection into memory and
-// building one giant string — memory stays bounded regardless of how many
-// rows exist, and the client starts receiving data immediately instead of
-// waiting for the entire export to finish server-side first.
+// The response streams to the client section by section (Firestore
+// `.stream()` per collection + a Web ReadableStream) rather than loading
+// every collection into memory and building one giant string first — each
+// section is sorted newest-first in memory (see collectSorted()) but the
+// client starts receiving Section 1 as soon as it's ready, without waiting
+// for Sections 2-4 to finish reading.
 export async function GET(request: NextRequest) {
   const origin  = request.headers.get("origin");
   const headers = corsHeaders(origin);
