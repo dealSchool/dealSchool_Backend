@@ -216,7 +216,7 @@ export function renderInterviewInvited(pr: { fullName: string }): string {
   return base(`
 ${greeting(pr.fullName)}
 ${p("Congratulations! After reviewing your application, we are pleased to invite you to <strong style=\"color:#082C6C;\">interview for the DealSchool Venture Fellowship</strong>.")}
-${infoBanner("Our admissions team will reach out to you shortly with interview scheduling details. Please keep this inbox and your phone accessible.")}
+${infoBanner("Our admissions team will reach out to you shortly for a discussion. Please keep this inbox and your phone accessible.")}
 ${p("This is an exciting step, and we look forward to learning more about you and your goals.")}
 ${signature("DealSchool Admissions Team")}`);
 }
