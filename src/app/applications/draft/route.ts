@@ -177,6 +177,7 @@ export async function POST(request: NextRequest) {
         currentStep: 1,
         formData:  step1Fields,
         status:    "in_progress",
+        reminderStage: 0,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
