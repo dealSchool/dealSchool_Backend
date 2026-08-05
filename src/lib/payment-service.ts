@@ -4,6 +4,7 @@ import { createPaymentLink } from "./cashfree";
 import { getCohortSettings } from "./cohort-settings";
 import { sendEmail } from "./mailer";
 import { renderPaymentLinkEmail } from "./email-templates";
+import { sendWhatsAppTemplate, toWhatsAppId } from "./cheerio-whatsapp";
 import { logInfo, logWarn, logError } from "./logger";
 
 const CANDIDATE_SENDER = "DealSchool <support@dealschool.in>";
@@ -107,31 +108,66 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
     paymentStatus:     "link_sent",
     paymentLinkId:     linkId,
     paymentLinkSentAt: FieldValue.serverTimestamp(),
+    // Reset so this refreshed link gets its own reminder timer — without
+    // this, an applicant who already received the automatic 24h payment
+    // reminder once would never be picked up again after a manual
+    // resend/create-link, since payment-reminder.ts's query requires
+    // paymentReminderSent == false. Mirrors the same reset the "accepted"
+    // transition already does in applications/[id]/route.ts.
+    paymentReminderSent: false,
     updatedAt:         FieldValue.serverTimestamp(),
   });
 
   const feeDisplay      = `₹${(feePaise / 100).toFixed(0)}`;
   const recipientEmail  = String(appData.email || "");
+  const mobileNumber    = appData.mobileNumber;
 
+  // Email and WhatsApp are independent channels — neither's absence should
+  // skip the other (previously, a missing email returned early and silently
+  // skipped WhatsApp too, even when a valid mobileNumber existed).
   if (!recipientEmail) {
     logWarn("payment-service", "Applicant has no email — payment link email skipped", { applicationId });
-    return;
+  } else {
+    logInfo("payment-service", "Sending payment link email", { applicationId, recipientEmail, feeDisplay });
+    try {
+      await sendEmail({
+        from:    CANDIDATE_SENDER,
+        to:      recipientEmail,
+        subject: "Your DealSchool Fellowship Offer: Action Required",
+        html:    renderPaymentLinkEmail({ fullName: String(appData.fullName || ""), linkUrl, feeDisplay }),
+      });
+      logInfo("payment-service", "Payment link email sent OK", { applicationId, recipientEmail });
+      await adminDb.collection("payments").doc(applicationId).update({
+        emailSentAt: FieldValue.serverTimestamp(),
+      });
+    } catch (err: unknown) {
+      logError("payment-service", `Payment link email FAILED — applicant did NOT receive payment link | applicationId=${applicationId} recipientEmail=${recipientEmail}`, err);
+    }
   }
 
-  logInfo("payment-service", "Sending payment link email", { applicationId, recipientEmail, feeDisplay });
-
-  try {
-    await sendEmail({
-      from:    CANDIDATE_SENDER,
-      to:      recipientEmail,
-      subject: "Your DealSchool Fellowship Offer: Action Required",
-      html:    renderPaymentLinkEmail({ fullName: String(appData.fullName || ""), linkUrl, feeDisplay }),
-    });
-    logInfo("payment-service", "Payment link email sent OK", { applicationId, recipientEmail });
-    await adminDb.collection("payments").doc(applicationId).update({
-      emailSentAt: FieldValue.serverTimestamp(),
-    });
-  } catch (err: unknown) {
-    logError("payment-service", `Payment link email FAILED — applicant did NOT receive payment link | applicationId=${applicationId} recipientEmail=${recipientEmail}`, err);
+  // WhatsApp — same "payment_link_new" template and the same linkUrl just
+  // created/emailed above. This function is called by both /payment/resend
+  // and /payment/create-link, so every time a payment link is (re)created,
+  // both channels get refreshed together — a resend can no longer leave the
+  // applicant's WhatsApp thread pointing at a stale, now-cancelled link while
+  // only email has the current one.
+  if (!mobileNumber) {
+    logWarn("payment-service", "Applicant has no mobileNumber — payment_link_new WhatsApp skipped", { applicationId });
+  } else {
+    try {
+      await sendWhatsAppTemplate({
+        to: toWhatsAppId(String(mobileNumber)),
+        templateName: "payment_link_new",
+        bodyParams: [
+          String(appData.fullName || "there"),
+          "You've been selected for the upcoming DealSchool Venture Capital Fellowship cohort.",
+          "We've just shared the next steps, along with your payment link, on your email. Please have a look whenever you get a chance.",
+        ],
+        buttonUrl: linkUrl,
+      });
+      logInfo("payment-service", "payment_link_new WhatsApp sent OK", { applicationId });
+    } catch (err: unknown) {
+      logError("payment-service", `payment_link_new WhatsApp FAILED applicationId=${applicationId}`, err);
+    }
   }
 }

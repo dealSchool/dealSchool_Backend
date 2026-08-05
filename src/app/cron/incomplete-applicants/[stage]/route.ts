@@ -4,7 +4,7 @@ import { runIncompleteApplicantReminder, type ReminderStage } from "@/lib/incomp
 
 export const runtime = "nodejs";
 
-const STAGE_BY_SLUG: Record<string, ReminderStage> = { "1h": 1, "12h": 2, "24h": 3 };
+const STAGE_BY_SLUG: Record<string, ReminderStage> = { "1h": 1, "24h": 2, "36h": 3 };
 
 function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -12,7 +12,7 @@ function isAuthorized(request: NextRequest): boolean {
   return request.headers.get("authorization") === `Bearer ${secret}`;
 }
 
-// ─── GET /cron/incomplete-applicants/[1h|12h|24h] — triggered by an external
+// ─── GET /cron/incomplete-applicants/[1h|24h|36h] — triggered by an external
 // cron (OS crontab on the VPS), not by the frontend. Sends the matching
 // WhatsApp reminder template to applicationDrafts that crossed that stage's
 // age threshold and haven't had it sent yet. ───────────────────────────────
@@ -27,9 +27,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (!stage) {
     return NextResponse.json({ error: `Unknown stage "${stageSlug}"` }, { status: 400 });
   }
+  const { searchParams } = new URL(request.url);
+  const force  = searchParams.get("force") === "true";
+  const testId = searchParams.get("testId") ?? undefined;
 
   try {
-    const result = await runIncompleteApplicantReminder(stage);
+    const result = await runIncompleteApplicantReminder(stage, { force, testId });
     return NextResponse.json(result);
   } catch (err) {
     logError("cron/incomplete-applicants", `Run failed stage=${stageSlug}`, err);

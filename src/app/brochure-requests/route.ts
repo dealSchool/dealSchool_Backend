@@ -123,9 +123,21 @@ export async function POST(request: NextRequest) {
       .get();
 
     if (!dupSnap.empty) {
-      const existingId = dupSnap.docs[0].id;
-      logInfo("api/brochure-requests", "Duplicate brochure request skipped", { requestId: existingId, email: safeEmail });
-      return NextResponse.json({ success: true, requestId: existingId, duplicate: true }, { status: 200, headers });
+      const existingDoc = dupSnap.docs[0];
+      // Renewed interest — someone downloading the brochure again after already
+      // going quiet (or having exhausted all 3 nudges) should re-enter the
+      // reminder sequence from the top rather than staying stuck wherever the
+      // old request left off. createdAt drives runBrochureReminder's age
+      // threshold, so it resets too — this request is the one that should
+      // count for timing purposes now.
+      await existingDoc.ref.update({
+        reminderStage: 0,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      invalidateBrochureRequestsListCache();
+      logInfo("api/brochure-requests", "Duplicate brochure request — reminder sequence reset", { requestId: existingDoc.id, email: safeEmail });
+      return NextResponse.json({ success: true, requestId: existingDoc.id, duplicate: true }, { status: 200, headers });
     }
 
     const docRef = adminDb.collection("brochureRequests").doc();
@@ -135,6 +147,7 @@ export async function POST(request: NextRequest) {
       email:     safeEmail,
       city:      safeCity,
       ip,
+      reminderStage: 0,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });

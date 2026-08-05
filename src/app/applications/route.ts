@@ -51,9 +51,11 @@ export async function GET(request: NextRequest) {
         adminDb.collection("applications").where("status", "==", "pending").count().get(),
         adminDb.collection("applications").where("status", "==", "under_review").count().get(),
         adminDb.collection("applications").where("status", "==", "interview_invited").count().get(),
+        adminDb.collection("applications").where("status", "==", "interview_completed").count().get(),
         adminDb.collection("applications").where("status", "==", "accepted").count().get(),
         adminDb.collection("applications").where("status", "==", "declined").count().get(),
         adminDb.collection("applications").where("status", "==", "cancelled").count().get(),
+        adminDb.collection("applications").where("paymentStatus", "==", "paid").count().get(),
       ]
     : [];
 
@@ -67,14 +69,19 @@ export async function GET(request: NextRequest) {
   // Every status the "applications" collection can hold must be counted here —
   // the admin dashboard sums these into a grand total for its tab badge and
   // pagination page count, so a missing status silently undercounts both.
+  // `paid` tracks the separate `paymentStatus` field (set only by the Cashfree
+  // webhook) rather than `status` — an application can be `status: "accepted"`
+  // without being paid yet, so this can't be derived from the values above.
   const counts = isFirstPage
     ? {
-        pending:           (countSnaps[0] as any).data().count,
-        under_review:      (countSnaps[1] as any).data().count,
-        interview_invited: (countSnaps[2] as any).data().count,
-        accepted:          (countSnaps[3] as any).data().count,
-        declined:          (countSnaps[4] as any).data().count,
-        cancelled:         (countSnaps[5] as any).data().count,
+        pending:             (countSnaps[0] as any).data().count,
+        under_review:        (countSnaps[1] as any).data().count,
+        interview_invited:   (countSnaps[2] as any).data().count,
+        interview_completed: (countSnaps[3] as any).data().count,
+        accepted:            (countSnaps[4] as any).data().count,
+        declined:            (countSnaps[5] as any).data().count,
+        cancelled:           (countSnaps[6] as any).data().count,
+        paid:                (countSnaps[7] as any).data().count,
       }
     : undefined;
 

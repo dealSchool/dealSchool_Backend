@@ -11,12 +11,13 @@ export const runtime = "nodejs";
 // Human-readable labels for the "applications" collection's `status` field —
 // shown in the export so admins don't have to decode raw enum values.
 const APPLICATION_STATUS_LABELS: Record<string, string> = {
-  pending:            "Pending",
-  under_review:       "Under Review (Auditing)",
-  interview_invited:  "Interview Invited",
-  accepted:           "Accepted / Payment",
-  declined:           "Declined",
-  cancelled:          "Cancelled",
+  pending:              "Pending",
+  under_review:         "Under Review (Auditing)",
+  interview_invited:    "Interview Invited",
+  interview_completed:  "Interview Completed",
+  accepted:             "Accepted / Payment",
+  declined:             "Declined",
+  cancelled:            "Cancelled",
 };
 
 const PAYMENT_STATUS_LABELS: Record<string, string> = {

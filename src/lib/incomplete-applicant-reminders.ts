@@ -2,13 +2,14 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
 
 export type ReminderStage = 1 | 2 | 3;
 
 const APPLY_URL = "https://dealschool.in/applynow";
 
 // Hours since draft creation (createdAt, not last-edit) before each stage fires.
-const STAGE_HOURS: Record<ReminderStage, number> = { 1: 1, 2: 12, 3: 24 };
+const STAGE_HOURS: Record<ReminderStage, number> = { 1: 1, 2: 24, 3: 36 };
 
 const STAGE_TEMPLATES: Record<ReminderStage, { name: string; body: (fullName: string) => string[] }> = {
   1: {
@@ -62,28 +63,40 @@ export interface ReminderRunResult {
   skippedNoPhone: number;
 }
 
-// Called by the cron-triggered routes at /cron/incomplete-applicants/[1h|12h|24h].
+// Called by the cron-triggered routes at /cron/incomplete-applicants/[1h|24h|36h].
 // Query is (status, prevStage, createdAt<=threshold) rather than a tight time
 // window — a late or missed cron run still picks up every applicant who has
 // crossed the threshold and hasn't had this stage's message sent yet.
-export async function runIncompleteApplicantReminder(stage: ReminderStage): Promise<ReminderRunResult> {
+export async function runIncompleteApplicantReminder(
+  stage: ReminderStage,
+  opts: { force?: boolean; testId?: string } = {}
+): Promise<ReminderRunResult> {
   const prevStage = stage - 1;
   const template = STAGE_TEMPLATES[stage];
-  const threshold = new Date(Date.now() - STAGE_HOURS[stage] * 60 * 60 * 1000);
+  // force=true (local/manual testing only) bypasses the age threshold — pair
+  // it with testId so it only ever touches that one document (see cron-test-scope.ts).
+  const threshold = opts.force ? FORCE_BYPASS_THRESHOLD : new Date(Date.now() - STAGE_HOURS[stage] * 60 * 60 * 1000);
 
-  const snapshot = await adminDb
-    .collection("applicationDrafts")
+  const collectionRef = adminDb.collection("applicationDrafts");
+  const query = collectionRef
     .where("status", "==", "in_progress")
     .where("reminderStage", "==", prevStage)
     .where("createdAt", "<=", threshold)
-    .limit(BATCH_CAP)
-    .get();
+    // Explicit oldest-first order — without this, Firestore doesn't
+    // contractually guarantee which BATCH_CAP docs come back if a backlog
+    // ever exceeds the cap. With it, a backlog drains oldest-overdue-first
+    // across successive hourly ticks instead of risking the same/arbitrary
+    // subset winning every time. Uses the same composite index already
+    // required for the filters above — no new index needed.
+    .orderBy("createdAt", "asc")
+    .limit(BATCH_CAP);
+  const docs = await resolveCronDocs(collectionRef, query, opts.testId);
 
   let sent = 0;
   let failed = 0;
   let skippedNoPhone = 0;
 
-  await runWithConcurrency(snapshot.docs, CONCURRENCY, async (doc) => {
+  await runWithConcurrency(docs, CONCURRENCY, async (doc) => {
     const data = doc.data();
     const fullName = data.formData?.fullName || "there";
     const mobileNumber = data.mobileNumber;
@@ -109,7 +122,7 @@ export async function runIncompleteApplicantReminder(stage: ReminderStage): Prom
     }
   });
 
-  const result: ReminderRunResult = { stage, matched: snapshot.docs.length, sent, failed, skippedNoPhone };
+  const result: ReminderRunResult = { stage, matched: docs.length, sent, failed, skippedNoPhone };
   logInfo("incomplete-applicant-reminders", "Run complete", result as unknown as Record<string, unknown>);
   return result;
 }

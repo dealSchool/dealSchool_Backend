@@ -7,6 +7,7 @@ import { serializeDoc } from "@/lib/serialize";
 import { createCashfreePaymentLink } from "@/lib/payment-service";
 import { cancelPaymentLink } from "@/lib/cashfree";
 import { sendEmail } from "@/lib/mailer";
+import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import {
   renderAppUnderReview,
@@ -121,6 +122,21 @@ export async function PATCH(
     delete updatePayload[field];
   }
 
+  // Track when the CURRENT status began — cron jobs (e.g. the under_review
+  // audit-followup reminder) key off this rather than updatedAt, which also
+  // changes for edits that aren't a status transition.
+  if (newStatus && newStatus !== prevStatus) {
+    updatePayload.statusChangedAt = FieldValue.serverTimestamp();
+    // Re-entering under_review restarts the audit-followup timer.
+    if (newStatus === "under_review") {
+      updatePayload.auditFollowupSent = false;
+    }
+    // Re-entering interview_invited restarts the interview-shortlisted-followup timer.
+    if (newStatus === "interview_invited") {
+      updatePayload.interviewReminderSent = false;
+    }
+  }
+
   // ── "accepted": Cashfree first, then atomic Firestore write ──────────────────
   if (newStatus === "accepted" && newStatus !== prevStatus) {
     // Step 1 — create Cashfree link (throws on failure → nothing written to DB)
@@ -155,6 +171,8 @@ export async function PATCH(
           paymentStatus:     "link_sent",
           paymentLinkId:     link.linkId,
           paymentLinkSentAt: FieldValue.serverTimestamp(),
+          // Reset so a re-accept (e.g. after a prior cancellation) gets its own reminder timer.
+          paymentReminderSent: false,
         });
         t.set(adminDb.collection("payments").doc(id), {
           applicationId:       id,
@@ -208,6 +226,24 @@ export async function PATCH(
       return adminDb.collection("payments").doc(id).update({ emailSentAt: FieldValue.serverTimestamp() });
     }).catch((err) => logError("api/applications/[id]", `Payment-link email FAILED id=${id} applicantEmail=${prevData.email}`, err));
 
+    // Step 4 — send payment-link WhatsApp (non-fatal; DB already committed)
+    if (!prevData.mobileNumber) {
+      logWarn("api/applications/[id]", "Applicant has no mobileNumber — payment_link_new WhatsApp skipped", { id });
+    } else {
+      sendWhatsAppTemplate({
+        to: toWhatsAppId(String(prevData.mobileNumber)),
+        templateName: "payment_link_new",
+        bodyParams: [
+          String(prevData.fullName || "there"),
+          "You've been selected for the upcoming DealSchool Venture Capital Fellowship cohort.",
+          "We've just shared the next steps, along with your payment link, on your email. Please have a look whenever you get a chance.",
+        ],
+        buttonUrl: link.linkUrl,
+      })
+        .then(() => logInfo("api/applications/[id]", "payment_link_new WhatsApp sent OK", { id }))
+        .catch((err) => logError("api/applications/[id]", `payment_link_new WhatsApp FAILED id=${id}`, err));
+    }
+
     invalidateApplicationsListCache();
     const updated = await docRef.get();
     logInfo("api/applications/[id]", "PATCH 200 — application accepted", { id });
@@ -249,9 +285,37 @@ export async function PATCH(
         .then(() => logInfo("api/applications/[id]", "Status-change email sent OK", { id, newStatus, applicantEmail: prevData.email }))
         .catch((err) => logError("api/applications/[id]", `Status-change email FAILED — applicant did NOT receive notification | id=${id} newStatus=${newStatus} applicantEmail=${prevData.email}`, err));
     }
+
+    // "interview_completed" is admin-marked (no email template) — fires the
+    // after_interview WhatsApp template immediately, not via a delayed cron.
+    if (newStatus === "interview_completed") {
+      if (!prevData.mobileNumber) {
+        logWarn("api/applications/[id]", "Applicant has no mobileNumber — after_interview WhatsApp skipped", { id });
+      } else {
+        sendWhatsAppTemplate({
+          to: toWhatsAppId(String(prevData.mobileNumber)),
+          templateName: "after_interview",
+          bodyParams: [
+            String(prevData.fullName || "there"),
+            "interview with us.",
+            "We're currently reviewing all shortlisted candidates and will share the outcome with you as soon as the process is complete.",
+            "We appreciate your patience, and we'll be in touch soon.",
+          ],
+        })
+          .then(() => logInfo("api/applications/[id]", "after_interview WhatsApp sent OK", { id }))
+          .catch((err) => logError("api/applications/[id]", `after_interview WhatsApp FAILED id=${id}`, err));
+      }
+    }
   }
 
-  const responsePayload = { ...updatePayload, updatedAt: new Date().toISOString() };
+  const responsePayload = {
+    ...updatePayload,
+    updatedAt: new Date().toISOString(),
+    // FieldValue.serverTimestamp() is a write-only sentinel — it doesn't
+    // serialize to a real value, so give the response a real Date same as
+    // updatedAt above (Firestore itself already has the correct value).
+    ...(updatePayload.statusChangedAt && { statusChangedAt: new Date().toISOString() }),
+  };
   const merged = serializeDoc({ ...prevData, ...responsePayload });
   logInfo("api/applications/[id]", "PATCH 200 completed", { id, newStatus });
   return NextResponse.json(

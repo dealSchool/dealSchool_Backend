@@ -103,6 +103,10 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
     discoverySourceOther: String(data.discoverySourceOther || ""),
 
     status:    "pending",
+    followupSent: false,
+    auditFollowupSent: false,
+    interviewReminderSent: false,
+    statusChangedAt: FieldValue.serverTimestamp(),
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   };

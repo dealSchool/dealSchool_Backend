@@ -11,6 +11,7 @@ import {
 import { sendEmail } from "@/lib/mailer";
 import { getNextInvoiceNumber, generateInvoicePdf } from "@/lib/invoice";
 import { logInfo, logWarn, logError } from "@/lib/logger";
+import { invalidateApplicationsListCache } from "@/lib/applications-cache";
 
 export const runtime = "nodejs";
 
@@ -176,6 +177,7 @@ export async function POST(request: NextRequest) {
         return new Response("OK", { status: 200 });
       }
 
+      invalidateApplicationsListCache();
       logInfo("api/webhooks/cashfree", "Firestore updated — application marked as paid", { applicationId, orderId });
 
       // ── Send emails (non-fatal, DB already committed) ────────────────────────
@@ -274,6 +276,7 @@ export async function POST(request: NextRequest) {
         { paymentStatus: "expired", updatedAt: FieldValue.serverTimestamp() },
         { merge: true }
       );
+      invalidateApplicationsListCache();
       logInfo("api/webhooks/cashfree", "Payment link marked expired in Firestore", { applicationId });
 
     // ─── link cancelled / partially paid — not used by this app, log only ────────
@@ -350,6 +353,7 @@ export async function POST(request: NextRequest) {
       return new Response("OK", { status: 200 });
     }
 
+    invalidateApplicationsListCache();
     logInfo("api/webhooks/cashfree", `Firestore updated — refund ${newStatus}`, { applicationId, refundId: refund.refund_id });
 
     // ── Send emails (non-fatal, DB already committed) ────────────────────────
