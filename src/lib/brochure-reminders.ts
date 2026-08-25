@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
 
 export type ReminderStage = 1 | 2 | 3;
@@ -11,9 +12,13 @@ const APPLY_URL = "https://dealschool.in/applynow";
 // Hours since brochure request creation (createdAt) before each stage fires.
 const STAGE_HOURS: Record<ReminderStage, number> = { 1: 1, 2: 24, 3: 36 };
 
-const STAGE_TEMPLATES: Record<ReminderStage, { name: string; body: (name: string) => string[] }> = {
+// emailTemplate keys match the "Template Name" column in the DealSchool Email
+// Templates sheet — see incomplete-applicant-reminders.ts for why this is
+// separate from the Meta-approved WhatsApp `name` above.
+const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: string; body: (name: string) => string[] }> = {
   1: {
     name: "brochure_application_1_new",
+    emailTemplate: "brochure_application_1",
     body: (name) => [
       name,
       "Thanks for downloading the DealSchool Fellowship brochure.",
@@ -24,6 +29,7 @@ const STAGE_TEMPLATES: Record<ReminderStage, { name: string; body: (name: string
   },
   2: {
     name: "brochure_application_2_new",
+    emailTemplate: "brochure_application_2",
     body: (name) => [
       name,
       "Just checking in to see if you had a chance to go through the brochure.",
@@ -34,6 +40,7 @@ const STAGE_TEMPLATES: Record<ReminderStage, { name: string; body: (name: string
   },
   3: {
     name: "brochure_application_3",
+    emailTemplate: "brochure_application_3",
     body: (name) => [
       name,
       "one last message from us 👋",
@@ -63,6 +70,9 @@ export interface ReminderRunResult {
   sent: number;
   failed: number;
   skippedNoPhone: number;
+  emailSent: number;
+  emailFailed: number;
+  skippedNoEmail: number;
 }
 
 // Called by the cron-triggered routes at /cron/brochure-reminders/[1h|24h|36h].
@@ -93,11 +103,15 @@ export async function runBrochureReminder(
   let sent = 0;
   let failed = 0;
   let skippedNoPhone = 0;
+  let emailSent = 0;
+  let emailFailed = 0;
+  let skippedNoEmail = 0;
 
   await runWithConcurrency(docs, CONCURRENCY, async (doc) => {
     const data = doc.data();
     const name    = data.name || "there";
     const contact = data.contact;
+    const email   = data.email;
 
     if (!contact) {
       skippedNoPhone += 1;
@@ -118,9 +132,27 @@ export async function runBrochureReminder(
       failed += 1;
       logError("brochure-reminders", `Reminder failed requestId=${doc.id} stage=${stage}`, err);
     }
+
+    // Email tracks its own progression (emailReminderStage) independent of
+    // reminderStage above — see incomplete-applicant-reminders.ts for why a
+    // stuck WhatsApp send would otherwise refire this stage's email on every
+    // cron tick instead of once.
+    const emailStageAlreadySent = Number(data.emailReminderStage ?? 0) >= stage;
+    if (!email || emailStageAlreadySent) {
+      if (!email) skippedNoEmail += 1;
+      return;
+    }
+    try {
+      await sendCheerioEmailTemplate(template.emailTemplate, String(email));
+      await doc.ref.update({ emailReminderStage: stage, lastEmailReminderSentAt: FieldValue.serverTimestamp() });
+      emailSent += 1;
+    } catch (err) {
+      emailFailed += 1;
+      logError("brochure-reminders", `Email reminder failed requestId=${doc.id} stage=${stage}`, err);
+    }
   });
 
-  const result: ReminderRunResult = { stage, matched: docs.length, sent, failed, skippedNoPhone };
+  const result: ReminderRunResult = { stage, matched: docs.length, sent, failed, skippedNoPhone, emailSent, emailFailed, skippedNoEmail };
   logInfo("brochure-reminders", "Run complete", result as unknown as Record<string, unknown>);
   return result;
 }

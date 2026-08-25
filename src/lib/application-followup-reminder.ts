@@ -2,10 +2,12 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
 
 const FOLLOWUP_HOURS = 48; // 2 days after full application submission
 const TEMPLATE_NAME = "application_submitted_followup";
+const EMAIL_TEMPLATE_NAME = "application_submitted_followup";
 
 function bodyParams(fullName: string): string[] {
   return [
@@ -42,6 +44,9 @@ export interface FollowupRunResult {
   failed: number;
   skippedNoPhone: number;
   skippedStatusMoved: number;
+  emailSent: number;
+  emailFailed: number;
+  skippedNoEmail: number;
 }
 
 // Called by the cron-triggered route at /cron/application-followup — runs
@@ -70,11 +75,15 @@ export async function runApplicationFollowupReminder(
   let failed = 0;
   let skippedNoPhone = 0;
   let skippedStatusMoved = 0;
+  let emailSent = 0;
+  let emailFailed = 0;
+  let skippedNoEmail = 0;
 
   await runWithConcurrency(docs, CONCURRENCY, async (doc) => {
     const data = doc.data();
     const fullName     = data.fullName || "there";
     const mobileNumber = data.mobileNumber;
+    const email        = data.email;
 
     if (!ELIGIBLE_STATUSES.has(String(data.status))) {
       skippedStatusMoved += 1;
@@ -104,9 +113,26 @@ export async function runApplicationFollowupReminder(
       failed += 1;
       logError("application-followup-reminder", `Reminder failed applicationId=${doc.id}`, err);
     }
+
+    // Email tracks its own followupEmailSent flag independent of followupSent
+    // above — a stuck WhatsApp send leaves followupSent=false forever, which
+    // would otherwise refire this email on every single cron tick instead of
+    // once.
+    if (!email || data.followupEmailSent === true) {
+      if (!email) skippedNoEmail += 1;
+      return;
+    }
+    try {
+      await sendCheerioEmailTemplate(EMAIL_TEMPLATE_NAME, String(email));
+      await doc.ref.update({ followupEmailSent: true, followupEmailSentAt: FieldValue.serverTimestamp() });
+      emailSent += 1;
+    } catch (err) {
+      emailFailed += 1;
+      logError("application-followup-reminder", `Email reminder failed applicationId=${doc.id}`, err);
+    }
   });
 
-  const result: FollowupRunResult = { matched: docs.length, sent, failed, skippedNoPhone, skippedStatusMoved };
+  const result: FollowupRunResult = { matched: docs.length, sent, failed, skippedNoPhone, skippedStatusMoved, emailSent, emailFailed, skippedNoEmail };
   logInfo("application-followup-reminder", "Run complete", result as unknown as Record<string, unknown>);
   return result;
 }

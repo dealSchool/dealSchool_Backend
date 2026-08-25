@@ -2,10 +2,12 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
 
 const AUDIT_FOLLOWUP_HOURS = 48; // 2 days after entering "under_review" (audit)
 const TEMPLATE_NAME = "application_under_audit";
+const EMAIL_TEMPLATE_NAME = "application_under_audit";
 
 function bodyParams(fullName: string): string[] {
   return [
@@ -33,6 +35,9 @@ export interface AuditFollowupRunResult {
   sent: number;
   failed: number;
   skippedNoPhone: number;
+  emailSent: number;
+  emailFailed: number;
+  skippedNoEmail: number;
 }
 
 // Called by the cron-triggered route at /cron/application-audit-followup —
@@ -64,11 +69,15 @@ export async function runApplicationAuditReminder(
   let sent = 0;
   let failed = 0;
   let skippedNoPhone = 0;
+  let emailSent = 0;
+  let emailFailed = 0;
+  let skippedNoEmail = 0;
 
   await runWithConcurrency(docs, CONCURRENCY, async (doc) => {
     const data = doc.data();
     const fullName     = data.fullName || "there";
     const mobileNumber = data.mobileNumber;
+    const email        = data.email;
 
     if (!mobileNumber) {
       skippedNoPhone += 1;
@@ -88,9 +97,25 @@ export async function runApplicationAuditReminder(
       failed += 1;
       logError("application-audit-reminder", `Reminder failed applicationId=${doc.id}`, err);
     }
+
+    // Email tracks its own auditFollowupEmailSent flag independent of
+    // auditFollowupSent above — see application-followup-reminder.ts for why
+    // a stuck WhatsApp send would otherwise refire this email every tick.
+    if (!email || data.auditFollowupEmailSent === true) {
+      if (!email) skippedNoEmail += 1;
+      return;
+    }
+    try {
+      await sendCheerioEmailTemplate(EMAIL_TEMPLATE_NAME, String(email));
+      await doc.ref.update({ auditFollowupEmailSent: true, auditFollowupEmailSentAt: FieldValue.serverTimestamp() });
+      emailSent += 1;
+    } catch (err) {
+      emailFailed += 1;
+      logError("application-audit-reminder", `Email reminder failed applicationId=${doc.id}`, err);
+    }
   });
 
-  const result: AuditFollowupRunResult = { matched: docs.length, sent, failed, skippedNoPhone };
+  const result: AuditFollowupRunResult = { matched: docs.length, sent, failed, skippedNoPhone, emailSent, emailFailed, skippedNoEmail };
   logInfo("application-audit-reminder", "Run complete", result as unknown as Record<string, unknown>);
   return result;
 }

@@ -2,10 +2,12 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
 
 const REMINDER_HOURS = 48; // 2 days after status changes to "interview_invited"
 const TEMPLATE_NAME = "interview_shortlisted_new";
+const EMAIL_TEMPLATE_NAME = "interview_shortlisted";
 
 // Static company scheduling link — configure the real one before deploying.
 const SCHEDULE_URL = process.env.INTERVIEW_SCHEDULE_URL || "https://dealschool.in/schedule-interview";
@@ -38,6 +40,9 @@ export interface InterviewShortlistedRunResult {
   sent: number;
   failed: number;
   skippedNoPhone: number;
+  emailSent: number;
+  emailFailed: number;
+  skippedNoEmail: number;
 }
 
 // Called by the cron-triggered route at /cron/interview-shortlisted-followup —
@@ -68,11 +73,15 @@ export async function runInterviewShortlistedReminder(
   let sent = 0;
   let failed = 0;
   let skippedNoPhone = 0;
+  let emailSent = 0;
+  let emailFailed = 0;
+  let skippedNoEmail = 0;
 
   await runWithConcurrency(docs, CONCURRENCY, async (doc) => {
     const data = doc.data();
     const fullName     = data.fullName || "there";
     const mobileNumber = data.mobileNumber;
+    const email        = data.email;
 
     if (!mobileNumber) {
       skippedNoPhone += 1;
@@ -93,9 +102,25 @@ export async function runInterviewShortlistedReminder(
       failed += 1;
       logError("interview-shortlisted-reminder", `Reminder failed applicationId=${doc.id}`, err);
     }
+
+    // Email tracks its own interviewReminderEmailSent flag independent of
+    // interviewReminderSent above — see application-followup-reminder.ts for
+    // why a stuck WhatsApp send would otherwise refire this email every tick.
+    if (!email || data.interviewReminderEmailSent === true) {
+      if (!email) skippedNoEmail += 1;
+      return;
+    }
+    try {
+      await sendCheerioEmailTemplate(EMAIL_TEMPLATE_NAME, String(email));
+      await doc.ref.update({ interviewReminderEmailSent: true, interviewReminderEmailSentAt: FieldValue.serverTimestamp() });
+      emailSent += 1;
+    } catch (err) {
+      emailFailed += 1;
+      logError("interview-shortlisted-reminder", `Email reminder failed applicationId=${doc.id}`, err);
+    }
   });
 
-  const result: InterviewShortlistedRunResult = { matched: docs.length, sent, failed, skippedNoPhone };
+  const result: InterviewShortlistedRunResult = { matched: docs.length, sent, failed, skippedNoPhone, emailSent, emailFailed, skippedNoEmail };
   logInfo("interview-shortlisted-reminder", "Run complete", result as unknown as Record<string, unknown>);
   return result;
 }

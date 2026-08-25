@@ -8,6 +8,7 @@ import { createCashfreePaymentLink } from "@/lib/payment-service";
 import { cancelPaymentLink } from "@/lib/cashfree";
 import { sendEmail } from "@/lib/mailer";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import {
   renderAppUnderReview,
@@ -304,6 +305,16 @@ export async function PATCH(
         })
           .then(() => logInfo("api/applications/[id]", "after_interview WhatsApp sent OK", { id }))
           .catch((err) => logError("api/applications/[id]", `after_interview WhatsApp FAILED id=${id}`, err));
+      }
+
+      // Same after_interview send, on the email channel — independent of the
+      // WhatsApp call above (its own fire-and-forget, doesn't block/depend on it).
+      if (!prevData.email) {
+        logWarn("api/applications/[id]", "Applicant has no email — after_interview email skipped", { id });
+      } else {
+        sendCheerioEmailTemplate("after_interview", String(prevData.email))
+          .then(() => logInfo("api/applications/[id]", "after_interview email sent OK", { id }))
+          .catch((err) => logError("api/applications/[id]", `after_interview email FAILED id=${id}`, err));
       }
     }
   }

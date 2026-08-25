@@ -2,6 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
 
 export type ReminderStage = 1 | 2 | 3;
@@ -11,9 +12,14 @@ const APPLY_URL = "https://dealschool.in/applynow";
 // Hours since draft creation (createdAt, not last-edit) before each stage fires.
 const STAGE_HOURS: Record<ReminderStage, number> = { 1: 1, 2: 24, 3: 36 };
 
-const STAGE_TEMPLATES: Record<ReminderStage, { name: string; body: (fullName: string) => string[] }> = {
+// emailTemplate keys match the "Template Name" column in the DealSchool Email
+// Templates sheet — kept separate from the WhatsApp `name` above since the
+// Meta-approved WhatsApp template names carry their own versioned suffixes
+// (e.g. "_final") that the email templates don't use.
+const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: string; body: (fullName: string) => string[] }> = {
   1: {
     name: "incomplete_applications_1",
+    emailTemplate: "incomplete_applications_1",
     body: (fullName) => [
       fullName,
       "you started your DealSchool application but didn't finish it.",
@@ -23,6 +29,7 @@ const STAGE_TEMPLATES: Record<ReminderStage, { name: string; body: (fullName: st
   },
   2: {
     name: "incomplete_applications_2",
+    emailTemplate: "incomplete_applications_2",
     body: (fullName) => [
       fullName,
       "application",
@@ -32,6 +39,7 @@ const STAGE_TEMPLATES: Record<ReminderStage, { name: string; body: (fullName: st
   },
   3: {
     name: "incomplete_applications_3_final",
+    emailTemplate: "incomplete_applications_3",
     body: (fullName) => [
       fullName,
       "last one from us 🙏",
@@ -61,6 +69,9 @@ export interface ReminderRunResult {
   sent: number;
   failed: number;
   skippedNoPhone: number;
+  emailSent: number;
+  emailFailed: number;
+  skippedNoEmail: number;
 }
 
 // Called by the cron-triggered routes at /cron/incomplete-applicants/[1h|24h|36h].
@@ -95,11 +106,15 @@ export async function runIncompleteApplicantReminder(
   let sent = 0;
   let failed = 0;
   let skippedNoPhone = 0;
+  let emailSent = 0;
+  let emailFailed = 0;
+  let skippedNoEmail = 0;
 
   await runWithConcurrency(docs, CONCURRENCY, async (doc) => {
     const data = doc.data();
     const fullName = data.formData?.fullName || "there";
     const mobileNumber = data.mobileNumber;
+    const email = data.email;
 
     if (!mobileNumber) {
       skippedNoPhone += 1;
@@ -120,9 +135,28 @@ export async function runIncompleteApplicantReminder(
       failed += 1;
       logError("incomplete-applicant-reminders", `Reminder failed draftId=${doc.id} stage=${stage}`, err);
     }
+
+    // Email tracks its own progression (emailReminderStage) independent of
+    // reminderStage above — the doc keeps matching this stage's query on
+    // every run until the WhatsApp send succeeds (see the query's prevStage
+    // filter), so without a separate gate a stuck WhatsApp send would refire
+    // this stage's email on every single cron tick instead of once.
+    const emailStageAlreadySent = Number(data.emailReminderStage ?? 0) >= stage;
+    if (!email || emailStageAlreadySent) {
+      if (!email) skippedNoEmail += 1;
+      return;
+    }
+    try {
+      await sendCheerioEmailTemplate(template.emailTemplate, String(email));
+      await doc.ref.update({ emailReminderStage: stage, lastEmailReminderSentAt: FieldValue.serverTimestamp() });
+      emailSent += 1;
+    } catch (err) {
+      emailFailed += 1;
+      logError("incomplete-applicant-reminders", `Email reminder failed draftId=${doc.id} stage=${stage}`, err);
+    }
   });
 
-  const result: ReminderRunResult = { stage, matched: docs.length, sent, failed, skippedNoPhone };
+  const result: ReminderRunResult = { stage, matched: docs.length, sent, failed, skippedNoPhone, emailSent, emailFailed, skippedNoEmail };
   logInfo("incomplete-applicant-reminders", "Run complete", result as unknown as Record<string, unknown>);
   return result;
 }

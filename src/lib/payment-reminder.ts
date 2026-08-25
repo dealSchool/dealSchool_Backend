@@ -2,12 +2,19 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
+import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
 
 const REMINDER_HOURS = 24; // after paymentLinkSentAt, if still unpaid
-const TEMPLATE_NAME = "payment_reminder_new";
+// Exported (not just used internally) so the manual "Send Payment Reminder"
+// admin-dashboard action (see /payment/send-reminder) fires the exact same
+// WhatsApp copy as this cron job, instead of a second hand-copied string that
+// could drift out of sync. Purely additive — nothing about this cron job's
+// own behavior changes.
+export const TEMPLATE_NAME = "payment_reminder_new";
+const EMAIL_TEMPLATE_NAME = "payment_reminder";
 
-function bodyParams(fullName: string): string[] {
+export function bodyParams(fullName: string): string[] {
   return [
     fullName,
     "admission payment hasn't been completed yet.",
@@ -33,6 +40,9 @@ export interface PaymentReminderRunResult {
   failed: number;
   skippedNoPhone: number;
   skippedNoLink: number;
+  emailSent: number;
+  emailFailed: number;
+  skippedNoEmail: number;
 }
 
 // Called by the cron-triggered route at /cron/payment-reminder — runs once
@@ -69,11 +79,15 @@ export async function runPaymentReminder(
   let failed = 0;
   let skippedNoPhone = 0;
   let skippedNoLink = 0;
+  let emailSent = 0;
+  let emailFailed = 0;
+  let skippedNoEmail = 0;
 
   await runWithConcurrency(docs, CONCURRENCY, async (doc) => {
     const data = doc.data();
     const fullName     = data.fullName || "there";
     const mobileNumber = data.mobileNumber;
+    const email        = data.email;
 
     if (!mobileNumber) {
       skippedNoPhone += 1;
@@ -103,9 +117,27 @@ export async function runPaymentReminder(
       failed += 1;
       logError("payment-reminder", `Reminder failed applicationId=${doc.id}`, err);
     }
+
+    // Email tracks its own paymentReminderEmailSent flag independent of
+    // paymentReminderSent above — see application-followup-reminder.ts for
+    // why a stuck WhatsApp send would otherwise refire this email every tick.
+    // (Already-paid applicants never reach here at all — the query above is
+    // scoped to paymentStatus=="link_sent", which excludes paymentStatus=="paid".)
+    if (!email || data.paymentReminderEmailSent === true) {
+      if (!email) skippedNoEmail += 1;
+      return;
+    }
+    try {
+      await sendCheerioEmailTemplate(EMAIL_TEMPLATE_NAME, String(email));
+      await doc.ref.update({ paymentReminderEmailSent: true, paymentReminderEmailSentAt: FieldValue.serverTimestamp() });
+      emailSent += 1;
+    } catch (err) {
+      emailFailed += 1;
+      logError("payment-reminder", `Email reminder failed applicationId=${doc.id}`, err);
+    }
   });
 
-  const result: PaymentReminderRunResult = { matched: docs.length, sent, failed, skippedNoPhone, skippedNoLink };
+  const result: PaymentReminderRunResult = { matched: docs.length, sent, failed, skippedNoPhone, skippedNoLink, emailSent, emailFailed, skippedNoEmail };
   logInfo("payment-reminder", "Run complete", result as unknown as Record<string, unknown>);
   return result;
 }
