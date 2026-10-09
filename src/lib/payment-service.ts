@@ -1,7 +1,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "./firebase-admin";
 import { createPaymentLink } from "./cashfree";
-import { getCohortSettings } from "./cohort-settings";
+import { cohortOf, getCohort } from "./cohort-settings";
 import { sendEmail } from "./mailer";
 import { renderPaymentLinkEmail } from "./email-templates";
 import { sendWhatsAppTemplate, toWhatsAppId } from "./cheerio-whatsapp";
@@ -14,6 +14,8 @@ export interface PaymentLinkData {
   linkUrl:   string;
   expiresAt: Timestamp;
   feePaise:  number;
+  cohort:     number;
+  cohortName: string;
 }
 
 /**
@@ -22,9 +24,12 @@ export interface PaymentLinkData {
  */
 export async function createCashfreePaymentLink(
   applicationId: string,
-  appData: { fullName?: string; email?: string; mobileNumber?: string },
+  appData: { fullName?: string; email?: string; mobileNumber?: string; cohort?: number },
 ): Promise<PaymentLinkData> {
-  const { feePaise } = await getCohortSettings();
+  // Priced against the application's OWN cohort (legacy records = Cohort 1),
+  // not whichever cohort happens to be active when the link is created.
+  const cohort = await getCohort(cohortOf(appData));
+  const { feePaise } = cohort;
   // Normalize to exactly one trailing slash regardless of whether
   // APP_BASE_URL was set with or without one — a bare .replace(/\/$/, "/")
   // is a no-op when there's no existing trailing slash to replace.
@@ -48,6 +53,8 @@ export async function createCashfreePaymentLink(
     linkUrl:   paymentLink.linkUrl,
     expiresAt: Timestamp.fromDate(paymentLink.expiresAt),
     feePaise,
+    cohort:     cohort.number,
+    cohortName: cohort.name,
   };
 }
 
@@ -86,10 +93,11 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
     return;
   }
 
-  const { linkId, linkUrl, expiresAt, feePaise } = link;
+  const { linkId, linkUrl, expiresAt, feePaise, cohort, cohortName } = link;
 
   await adminDb.collection("payments").doc(applicationId).set({
     applicationId,
+    cohort,
     applicantName:    appData.fullName     || "",
     applicantEmail:   appData.email        || "",
     applicantPhone:   appData.mobileNumber || "",
@@ -134,7 +142,7 @@ export async function createAndSendPaymentLink(applicationId: string): Promise<v
         from:    CANDIDATE_SENDER,
         to:      recipientEmail,
         subject: "Your DealSchool Fellowship Offer: Action Required",
-        html:    renderPaymentLinkEmail({ fullName: String(appData.fullName || ""), linkUrl, feeDisplay }),
+        html:    renderPaymentLinkEmail({ fullName: String(appData.fullName || ""), linkUrl, feeDisplay, cohortName }),
       });
       logInfo("payment-service", "Payment link email sent OK", { applicationId, recipientEmail });
       await adminDb.collection("payments").doc(applicationId).update({

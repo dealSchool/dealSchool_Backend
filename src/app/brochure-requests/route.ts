@@ -10,6 +10,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { renderBrochureRequestAdmin } from "@/lib/email-templates";
 import { LIST_CACHE_TTL_MS, listCache, invalidateBrochureRequestsListCache } from "@/lib/brochure-requests-cache";
+import { cohortOf, getActiveCohortNumber, listCacheKey, parseCohortFilter } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,8 @@ const ADMIN_SENDER = "DealSchool <support@dealschool.in>";
 const PAGE_SIZE = 50;
 
 // ─── GET /brochure-requests — admin: paginated list ───────────────────────────
-// Query params: ?limit=50&after=<docId>
+// Query params: ?limit=50&after=<docId>&cohort=<n|all>
+// `cohort` scopes the list and total to one cohort; omitted = all cohorts.
 // First page response also includes the total request count for the dashboard.
 export async function GET(request: NextRequest) {
   const origin  = request.headers.get("origin");
@@ -32,15 +34,25 @@ export async function GET(request: NextRequest) {
   const after       = searchParams.get("after");
   const isFirstPage = !after;
 
+  const { cohort, invalid } = parseCohortFilter(searchParams.get("cohort"));
+  if (invalid) {
+    return NextResponse.json({ error: "cohort must be a positive integer or \"all\"" }, { status: 400, headers });
+  }
+  const cacheKey = listCacheKey(limit, cohort);
+
   if (isFirstPage) {
-    const hit = listCache.get(limit);
+    const hit = listCache.get(cacheKey);
     if (hit && Date.now() < hit.expiresAt) {
       return NextResponse.json(hit.body, { headers });
     }
   }
 
-  let query = adminDb
-    .collection("brochureRequests")
+  const scoped = (): FirebaseFirestore.Query => {
+    const col = adminDb.collection("brochureRequests");
+    return cohort ? col.where("cohort", "==", cohort) : col;
+  };
+
+  let query = scoped()
     .orderBy("createdAt", "desc")
     .limit(limit + 1); // +1 to detect hasMore without an extra query
 
@@ -51,18 +63,18 @@ export async function GET(request: NextRequest) {
 
   const [snapshot, totalSnap] = await Promise.all([
     query.get(),
-    isFirstPage ? adminDb.collection("brochureRequests").count().get() : Promise.resolve(null),
+    isFirstPage ? scoped().count().get() : Promise.resolve(null),
   ]);
 
   const hasMore     = snapshot.docs.length > limit;
   const docs        = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-  const requests    = docs.map((d) => ({ id: d.id, ...serializeDoc(d.data()) }));
+  const requests    = docs.map((d) => ({ id: d.id, ...serializeDoc(d.data()), cohort: cohortOf(d.data()) }));
   const nextCursor  = hasMore ? docs[docs.length - 1].id : null;
   const total       = totalSnap ? (totalSnap as any).data().count : undefined;
 
   const body = { requests, hasMore, nextCursor, total };
   if (isFirstPage) {
-    listCache.set(limit, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
+    listCache.set(cacheKey, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
   }
   return NextResponse.json(body, { headers });
 }
@@ -114,16 +126,25 @@ export async function POST(request: NextRequest) {
     const safeEmail   = sanitizeHeader(String(email)).toLowerCase().slice(0, 200);
     const safeCity    = sanitizeHeader(String(city)).slice(0, 100);
 
-    // Skip saving if this exact email + contact combination already requested a brochure
+    // New requests are stamped with the cohort active right now (server-side,
+    // never from the request body).
+    const activeCohort = await getActiveCohortNumber();
+
+    // Skip saving if this exact email + contact combination already requested a
+    // brochure in THIS cohort — a repeat request in a later cohort is a fresh
+    // lead for that cohort and gets its own record, so earlier cohorts' counts
+    // stay intact. Filtered in memory so legacy records with no `cohort` field
+    // still count as Cohort 1.
     const dupSnap = await adminDb
       .collection("brochureRequests")
       .where("email", "==", safeEmail)
       .where("contact", "==", safeContact)
-      .limit(1)
+      .limit(20)
       .get();
+    const sameCohortDup = dupSnap.docs.find((d) => cohortOf(d.data()) === activeCohort);
 
-    if (!dupSnap.empty) {
-      const existingDoc = dupSnap.docs[0];
+    if (sameCohortDup) {
+      const existingDoc = sameCohortDup;
       // Renewed interest — someone downloading the brochure again after already
       // going quiet (or having exhausted all 3 nudges) should re-enter the
       // reminder sequence from the top rather than staying stuck wherever the
@@ -142,6 +163,7 @@ export async function POST(request: NextRequest) {
 
     const docRef = adminDb.collection("brochureRequests").doc();
     await docRef.set({
+      cohort:    activeCohort,
       name:      safeName,
       contact:   safeContact,
       email:     safeEmail,

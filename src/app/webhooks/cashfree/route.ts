@@ -12,6 +12,7 @@ import { sendEmail } from "@/lib/mailer";
 import { getNextInvoiceNumber, generateInvoicePdf } from "@/lib/invoice";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 import { invalidateApplicationsListCache } from "@/lib/applications-cache";
+import { cohortOf, getCohort } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -225,6 +226,10 @@ export async function POST(request: NextRequest) {
           logError("api/webhooks/cashfree", `Invoice generation FAILED applicationId=${applicationId}`, err);
         }
 
+        // The receipt names the cohort the applicant actually enrolled in (their
+        // own record's cohort, not whichever cohort is active today).
+        const cohortName = await getCohort(cohortOf(appData)).then((c) => c.name).catch(() => undefined);
+
         logInfo("api/webhooks/cashfree", "Sending payment receipt email", { applicationId, applicantEmail: appData.email });
         sendEmail({
           from:    CANDIDATE_SENDER,
@@ -238,6 +243,7 @@ export async function POST(request: NextRequest) {
             paidOnDisplay,
             applicantEmail: String(appData.email),
             mobileNumber: appData.mobileNumber ? String(appData.mobileNumber) : undefined,
+            cohortName,
           }),
           attachments: invoiceAttachment,
         })

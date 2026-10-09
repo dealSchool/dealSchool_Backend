@@ -7,13 +7,15 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { submitApplication } from "@/lib/application-service";
 import { LIST_CACHE_TTL_MS, listCache } from "@/lib/applications-cache";
+import { parseCohortFilter, listCacheKey, cohortOf } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
 const PAGE_SIZE = 50;
 
 // ─── GET /applications — admin: paginated list ────────────────────────────────
-// Query params: ?limit=50&after=<docId>
+// Query params: ?limit=50&after=<docId>&cohort=<n|all>
+// `cohort` scopes both the list and the counts to one cohort; omitted = all cohorts.
 // First page response also includes aggregate counts so the dashboard metrics
 // stay accurate without a separate API call.
 export async function GET(request: NextRequest) {
@@ -28,15 +30,25 @@ export async function GET(request: NextRequest) {
   const after      = searchParams.get("after");
   const isFirstPage = !after;
 
+  const { cohort, invalid } = parseCohortFilter(searchParams.get("cohort"));
+  if (invalid) {
+    return NextResponse.json({ error: "cohort must be a positive integer or \"all\"" }, { status: 400, headers });
+  }
+  const cacheKey = listCacheKey(limit, cohort);
+
   if (isFirstPage) {
-    const hit = listCache.get(limit);
+    const hit = listCache.get(cacheKey);
     if (hit && Date.now() < hit.expiresAt) {
       return NextResponse.json(hit.body, { headers });
     }
   }
 
-  let query = adminDb
-    .collection("applications")
+  const scoped = (): FirebaseFirestore.Query => {
+    const col = adminDb.collection("applications");
+    return cohort ? col.where("cohort", "==", cohort) : col;
+  };
+
+  let query = scoped()
     .orderBy("createdAt", "desc")
     .limit(limit + 1); // +1 to detect hasMore without an extra query
 
@@ -48,14 +60,14 @@ export async function GET(request: NextRequest) {
   // Run page fetch + count aggregations in parallel (counts only on first page)
   const countQueries = isFirstPage
     ? [
-        adminDb.collection("applications").where("status", "==", "pending").count().get(),
-        adminDb.collection("applications").where("status", "==", "under_review").count().get(),
-        adminDb.collection("applications").where("status", "==", "interview_invited").count().get(),
-        adminDb.collection("applications").where("status", "==", "interview_completed").count().get(),
-        adminDb.collection("applications").where("status", "==", "accepted").count().get(),
-        adminDb.collection("applications").where("status", "==", "declined").count().get(),
-        adminDb.collection("applications").where("status", "==", "cancelled").count().get(),
-        adminDb.collection("applications").where("paymentStatus", "==", "paid").count().get(),
+        scoped().where("status", "==", "pending").count().get(),
+        scoped().where("status", "==", "under_review").count().get(),
+        scoped().where("status", "==", "interview_invited").count().get(),
+        scoped().where("status", "==", "interview_completed").count().get(),
+        scoped().where("status", "==", "accepted").count().get(),
+        scoped().where("status", "==", "declined").count().get(),
+        scoped().where("status", "==", "cancelled").count().get(),
+        scoped().where("paymentStatus", "==", "paid").count().get(),
       ]
     : [];
 
@@ -63,7 +75,7 @@ export async function GET(request: NextRequest) {
 
   const hasMore    = snapshot.docs.length > limit;
   const docs       = hasMore ? snapshot.docs.slice(0, limit) : snapshot.docs;
-  const applications = docs.map((d) => ({ id: d.id, ...serializeDoc(d.data()) }));
+  const applications = docs.map((d) => ({ id: d.id, ...serializeDoc(d.data()), cohort: cohortOf(d.data()) }));
   const nextCursor = hasMore ? docs[docs.length - 1].id : null;
 
   // Every status the "applications" collection can hold must be counted here —
@@ -87,7 +99,7 @@ export async function GET(request: NextRequest) {
 
   const body = { applications, hasMore, nextCursor, counts };
   if (isFirstPage) {
-    listCache.set(limit, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
+    listCache.set(cacheKey, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
   }
   return NextResponse.json(body, { headers });
 }

@@ -4,6 +4,7 @@ import { sendEmail } from "@/lib/mailer";
 import { logInfo, logError } from "@/lib/logger";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { invalidateApplicationsListCache } from "@/lib/applications-cache";
+import { applicationExistsInCohort, getActiveCohort } from "@/lib/cohort-settings";
 import {
   renderAppReceivedCandidate,
   renderAppReceivedAdmin,
@@ -38,15 +39,20 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
   data.email        = sanitizeHeader(String(data.email)).toLowerCase();
   data.mobileNumber = sanitizeHeader(String(data.mobileNumber));
 
-  const dupSnap = await adminDb
-    .collection("applications")
-    .where(Filter.or(
+  // The cohort is always the one active right now — taken from the server,
+  // never from the request body — so a new application is attached to the
+  // current cohort automatically. The duplicate check is per cohort: someone
+  // who applied to an earlier cohort may apply again.
+  const cohort = await getActiveCohort();
+
+  const alreadyApplied = await applicationExistsInCohort(
+    Filter.or(
       Filter.where("email", "==", data.email),
       Filter.where("mobileNumber", "==", data.mobileNumber),
-    ))
-    .limit(1)
-    .get();
-  if (!dupSnap.empty) {
+    ),
+    cohort.number,
+  );
+  if (alreadyApplied) {
     return {
       ok: false,
       status: 409,
@@ -68,6 +74,7 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
     city:          String(data.city          || ""),
     currentStatus: String(data.currentStatus || ""),
     agreedToTerms: Boolean(data.agreedToTerms),
+    cohort:        cohort.number,
 
     ...(data.currentStatus === "Student" && {
       collegeName:    data.collegeName,
@@ -113,7 +120,7 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
 
   await docRef.set(payload);
   invalidateApplicationsListCache();
-  logInfo("application-service", "Application saved to Firestore", { applicationId: docRef.id, email: data.email, currentStatus: data.currentStatus });
+  logInfo("application-service", "Application saved to Firestore", { applicationId: docRef.id, email: data.email, currentStatus: data.currentStatus, cohort: cohort.number });
 
   const adminEmail = process.env.NOTIFICATION_EMAIL || "support@dealschool.in";
 
@@ -135,6 +142,7 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
     to:      String(data.email),
     subject: "Application Received",
     html:    renderAppReceivedCandidate({
+      cohortName:      cohort.name,
       fullName:        String(data.fullName     || ""),
       currentStatus:   String(data.currentStatus || ""),
       affiliationLabel,
@@ -149,8 +157,9 @@ export async function submitApplication(data: any): Promise<SubmitApplicationRes
   sendEmail({
     from:    ADMIN_SENDER,
     to:      adminEmail,
-    subject: `[Admissions] New Fellowship Application: ${String(data.fullName || "")}`,
+    subject: `[Admissions] New Fellowship Application (${cohort.name}): ${String(data.fullName || "")}`,
     html:    renderAppReceivedAdmin({
+      cohortName:     cohort.name,
       fullName:       String(data.fullName      || ""),
       email:          String(data.email         || ""),
       mobileNumber:   String(data.mobileNumber  || ""),

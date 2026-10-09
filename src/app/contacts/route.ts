@@ -10,6 +10,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { renderContactInquiryAdmin, renderContactInquiryCandidate } from "@/lib/email-templates";
 import { LIST_CACHE_TTL_MS, listCache, invalidateContactsListCache } from "@/lib/contacts-cache";
+import { cohortOf, getActiveCohortNumber, listCacheKey, parseCohortFilter } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -22,7 +23,8 @@ const PAGE_SIZE = 50;
 // for a short TTL — same pattern as cohort-settings.ts/payment-mode-settings.ts.
 
 // ─── GET /contacts — admin: paginated list ────────────────────────────────────
-// Query params: ?limit=50&after=<docId>
+// Query params: ?limit=50&after=<docId>&cohort=<n|all>
+// `cohort` scopes the list and counts to one cohort; omitted = all cohorts.
 // First page response also includes aggregate counts for the dashboard metrics.
 export async function GET(request: NextRequest) {
   const origin  = request.headers.get("origin");
@@ -36,15 +38,25 @@ export async function GET(request: NextRequest) {
   const after      = searchParams.get("after");
   const isFirstPage = !after;
 
+  const { cohort, invalid } = parseCohortFilter(searchParams.get("cohort"));
+  if (invalid) {
+    return NextResponse.json({ error: "cohort must be a positive integer or \"all\"" }, { status: 400, headers });
+  }
+  const cacheKey = listCacheKey(limit, cohort);
+
   if (isFirstPage) {
-    const hit = listCache.get(limit);
+    const hit = listCache.get(cacheKey);
     if (hit && Date.now() < hit.expiresAt) {
       return NextResponse.json(hit.body, { headers });
     }
   }
 
-  let query = adminDb
-    .collection("contacts")
+  const scoped = (): FirebaseFirestore.Query => {
+    const col = adminDb.collection("contacts");
+    return cohort ? col.where("cohort", "==", cohort) : col;
+  };
+
+  let query = scoped()
     .orderBy("createdAt", "desc")
     .limit(limit + 1);
 
@@ -55,10 +67,10 @@ export async function GET(request: NextRequest) {
 
   const countQueries = isFirstPage
     ? [
-        adminDb.collection("contacts").where("status", "==", "unread").count().get(),
-        adminDb.collection("contacts").where("status", "==", "read").count().get(),
-        adminDb.collection("contacts").where("status", "==", "archived").count().get(),
-        adminDb.collection("contacts").where("status", "==", "replied").count().get(),
+        scoped().where("status", "==", "unread").count().get(),
+        scoped().where("status", "==", "read").count().get(),
+        scoped().where("status", "==", "archived").count().get(),
+        scoped().where("status", "==", "replied").count().get(),
       ]
     : [];
 
@@ -77,7 +89,7 @@ export async function GET(request: NextRequest) {
         sentAt: r?.sentAt?.toDate ? r.sentAt.toDate().toISOString() : r.sentAt,
       }));
     }
-    return { id: d.id, ...data };
+    return { id: d.id, ...data, cohort: cohortOf(d.data()) };
   });
   const nextCursor = hasMore ? docs[docs.length - 1].id : null;
 
@@ -95,7 +107,7 @@ export async function GET(request: NextRequest) {
 
   const body = { contacts, hasMore, nextCursor, counts };
   if (isFirstPage) {
-    listCache.set(limit, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
+    listCache.set(cacheKey, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
   }
   return NextResponse.json(body, { headers });
 }
@@ -167,6 +179,7 @@ export async function POST(request: NextRequest) {
 
     const docRef = adminDb.collection("contacts").doc();
     await docRef.set({
+      cohort:    await getActiveCohortNumber(),
       name:      safeName,
       email:     safeEmail,
       subject:   safeSubject,

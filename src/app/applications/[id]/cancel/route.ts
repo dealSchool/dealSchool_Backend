@@ -5,7 +5,7 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
 import { cancelPaymentLink, createRefund } from "@/lib/cashfree";
-import { getCohortSettings } from "@/lib/cohort-settings";
+import { cohortOf, getCohort } from "@/lib/cohort-settings";
 import { computeRefundTier } from "@/lib/refund-service";
 import { sendEmail } from "@/lib/mailer";
 import { logInfo, logWarn, logError } from "@/lib/logger";
@@ -121,7 +121,10 @@ export async function POST(
   }
 
   // ── Paid (or retrying after a failed refund): determine the tier ────────────
-  const { startDate } = await getCohortSettings();
+  // Refund tier is judged against the start date of the cohort this application
+  // belongs to — a Cohort 1 fellow cancelling while Cohort 2 is active must not
+  // be measured against Cohort 2's start date.
+  const { startDate } = await getCohort(cohortOf(appData));
   const { percent: refundPercent, daysBeforeStart } = computeRefundTier(startDate);
   const originalAmountPaise = paymentData!.amount as number;
   const refundAmountPaise   = Math.round((originalAmountPaise * refundPercent) / 100);

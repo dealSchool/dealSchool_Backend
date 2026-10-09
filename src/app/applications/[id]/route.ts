@@ -17,6 +17,7 @@ import {
   renderPaymentLinkEmail,
 } from "@/lib/email-templates";
 import { invalidateApplicationsListCache } from "@/lib/applications-cache";
+import { cohortOf } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -57,7 +58,7 @@ export async function GET(
     return NextResponse.json({ error: "Application not found" }, { status: 404, headers });
   }
 
-  const application = { id: appSnap.id, ...serializeDoc(appSnap.data()!) };
+  const application = { id: appSnap.id, ...serializeDoc(appSnap.data()!), cohort: cohortOf(appSnap.data()) };
   const payment      = paymentSnap.exists ? { id: paymentSnap.id, ...serializeDoc(paymentSnap.data()!) } : null;
 
   return NextResponse.json({ application, payment }, { headers });
@@ -177,6 +178,7 @@ export async function PATCH(
         });
         t.set(adminDb.collection("payments").doc(id), {
           applicationId:       id,
+          cohort:              link.cohort,
           applicantName:       prevData.fullName     || "",
           applicantEmail:      prevData.email        || "",
           applicantPhone:      prevData.mobileNumber || "",
@@ -221,6 +223,7 @@ export async function PATCH(
         fullName:   String(prevData.fullName || ""),
         linkUrl:    link.linkUrl,
         feeDisplay,
+        cohortName: link.cohortName,
       }),
     }).then(() => {
       logInfo("api/applications/[id]", "Payment-link email sent OK", { id, applicantEmail: prevData.email });

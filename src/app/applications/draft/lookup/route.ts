@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as crypto from "crypto";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue, Filter, Timestamp } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { sendEmail } from "@/lib/mailer";
@@ -8,6 +8,7 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { sanitizeHeader, maskEmail } from "@/lib/validate";
 import { renderDraftOTP } from "@/lib/email-templates";
+import { applicationExistsInCohort, getActiveCohortNumber } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -53,8 +54,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const appSnap = await adminDb.collection("applications").where("mobileNumber", "==", mobileNumber).limit(1).get();
-    if (!appSnap.empty) {
+    const activeCohort = await getActiveCohortNumber();
+    const alreadyApplied = await applicationExistsInCohort(Filter.where("mobileNumber", "==", mobileNumber), activeCohort);
+    if (alreadyApplied) {
       return NextResponse.json({ alreadyApplied: true, error: ALREADY_APPLIED_MSG }, { status: 409, headers });
     }
 

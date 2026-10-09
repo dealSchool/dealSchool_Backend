@@ -8,6 +8,7 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isValidEmail, sanitizeHeader } from "@/lib/validate";
 import { LIST_CACHE_TTL_MS, listCache, invalidateDraftsListCache } from "@/lib/drafts-cache";
+import { applicationExistsInCohort, cohortOf, getActiveCohortNumber, listCacheKey, parseCohortFilter } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -29,16 +30,25 @@ export async function GET(request: NextRequest) {
   const after       = searchParams.get("after");
   const isFirstPage = !after;
 
+  const { cohort, invalid } = parseCohortFilter(searchParams.get("cohort"));
+  if (invalid) {
+    return NextResponse.json({ error: "cohort must be a positive integer or \"all\"" }, { status: 400, headers });
+  }
+  const cacheKey = listCacheKey(limit, cohort);
+
   if (isFirstPage) {
-    const hit = listCache.get(limit);
+    const hit = listCache.get(cacheKey);
     if (hit && Date.now() < hit.expiresAt) {
       return NextResponse.json(hit.body, { headers });
     }
   }
 
-  let query = adminDb
-    .collection("applicationDrafts")
-    .where("status", "==", "in_progress")
+  const inProgress = (): FirebaseFirestore.Query => {
+    const q = adminDb.collection("applicationDrafts").where("status", "==", "in_progress");
+    return cohort ? q.where("cohort", "==", cohort) : q;
+  };
+
+  let query = inProgress()
     .orderBy("updatedAt", "desc")
     .limit(limit + 1);
 
@@ -49,9 +59,7 @@ export async function GET(request: NextRequest) {
 
   const countQueries = isFirstPage
     ? [1, 2, 3, 4, 5].map((step) =>
-        adminDb
-          .collection("applicationDrafts")
-          .where("status", "==", "in_progress")
+        inProgress()
           .where("currentStep", "==", step)
           .count()
           .get()
@@ -72,7 +80,7 @@ export async function GET(request: NextRequest) {
     const data      = serializeDoc(d.data());
     const updatedAt = data.updatedAt ? new Date(data.updatedAt).getTime() : now;
     const label     = now - updatedAt > ABANDONED_AFTER_MS ? "abandoned" : "in_progress";
-    return { id: d.id, ...data, label };
+    return { id: d.id, ...data, cohort: cohortOf(d.data()), label };
   });
   const nextCursor = hasMore ? docs[docs.length - 1].id : null;
 
@@ -86,7 +94,7 @@ export async function GET(request: NextRequest) {
 
   const body = { drafts, hasMore, nextCursor, counts };
   if (isFirstPage) {
-    listCache.set(limit, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
+    listCache.set(cacheKey, { body, expiresAt: Date.now() + LIST_CACHE_TTL_MS });
   }
   return NextResponse.json(body, { headers });
 }
@@ -130,16 +138,20 @@ export async function POST(request: NextRequest) {
   const linkedinUrl = data.linkedinUrl ? sanitizeHeader(String(data.linkedinUrl)) : "";
 
   try {
-    // Someone who already fully applied shouldn't be routed into a fresh draft.
-    const appDupSnap = await adminDb
-      .collection("applications")
-      .where(Filter.or(
+    // New drafts and applications are always for the currently active cohort —
+    // taken from the server, never from the request body.
+    const activeCohort = await getActiveCohortNumber();
+
+    // Someone who already fully applied to THIS cohort shouldn't be routed into
+    // a fresh draft (applicants from earlier cohorts may apply again).
+    const alreadyApplied = await applicationExistsInCohort(
+      Filter.or(
         Filter.where("email", "==", email),
         Filter.where("mobileNumber", "==", mobileNumber),
-      ))
-      .limit(1)
-      .get();
-    if (!appDupSnap.empty) {
+      ),
+      activeCohort,
+    );
+    if (alreadyApplied) {
       return NextResponse.json({ alreadyApplied: true, error: ALREADY_APPLIED_MSG }, { status: 409, headers });
     }
 
@@ -165,6 +177,9 @@ export async function POST(request: NextRequest) {
         t.update(existingDoc.ref, {
           formData:  { ...existing.formData, ...step1Fields },
           email,
+          // Resuming means they're applying now — a draft left over from an
+          // earlier cohort moves into the active one.
+          cohort:    activeCohort,
           updatedAt: FieldValue.serverTimestamp(),
         });
         return { draftId: existingDoc.id, currentStep: existing.currentStep as number, resumed: true, isNew: false };
@@ -177,6 +192,7 @@ export async function POST(request: NextRequest) {
         currentStep: 1,
         formData:  step1Fields,
         status:    "in_progress",
+        cohort:    activeCohort,
         reminderStage: 0,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Filter } from "firebase-admin/firestore";
-import { adminDb } from "@/lib/firebase-admin";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { isValidEmail } from "@/lib/validate";
 import { logInfo, logWarn } from "@/lib/logger";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { applicationExistsInCohort, getActiveCohortNumber } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -60,8 +60,8 @@ export async function POST(request: NextRequest) {
       ? Filter.where("email", "==", email)
       : Filter.where("mobileNumber", "==", phone as string);
 
-  const snap = await adminDb.collection("applications").where(filter).limit(1).get();
-  const alreadyApplied = !snap.empty;
+  // Scoped to the active cohort — someone who applied to an earlier cohort may apply again.
+  const alreadyApplied = await applicationExistsInCohort(filter, await getActiveCohortNumber());
 
   logInfo("api/applications/check", "Duplicate check completed", { email: email ?? "none", phone: phone ?? "none", alreadyApplied: String(alreadyApplied) });
 

@@ -4,6 +4,7 @@ import { logInfo, logWarn, logError } from "@/lib/logger";
 import { sendWhatsAppTemplate, toWhatsAppId } from "@/lib/cheerio-whatsapp";
 import { sendCheerioEmailTemplate } from "@/lib/cheerio-email-templates";
 import { resolveCronDocs, FORCE_BYPASS_THRESHOLD } from "@/lib/cron-test-scope";
+import { getActiveCohort, type Cohort } from "@/lib/cohort-settings";
 
 export type ReminderStage = 1 | 2 | 3;
 
@@ -16,21 +17,23 @@ const STAGE_HOURS: Record<ReminderStage, number> = { 1: 1, 2: 24, 3: 36 };
 // Templates sheet — kept separate from the WhatsApp `name` above since the
 // Meta-approved WhatsApp template names carry their own versioned suffixes
 // (e.g. "_final") that the email templates don't use.
-const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: string; body: (fullName: string) => string[] }> = {
+// The apply link always leads to the currently active cohort's form, so the
+// seat-scarcity copy names the active cohort rather than a hardcoded one.
+const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: string; body: (fullName: string, cohort: Cohort) => string[] }> = {
   1: {
     name: "incomplete_applications_1",
     emailTemplate: "incomplete_applications_1",
-    body: (fullName) => [
+    body: (fullName, cohort) => [
       fullName,
       "you started your DealSchool application but didn't finish it.",
-      "Cohort 1 has only 20 seats.",
+      cohort.seats ? `${cohort.name} has only ${cohort.seats} seats.` : `${cohort.name} has limited seats.`,
       "application from where you left off",
     ],
   },
   2: {
     name: "incomplete_applications_2",
     emailTemplate: "incomplete_applications_2",
-    body: (fullName) => [
+    body: (fullName, _cohort) => [
       fullName,
       "application",
       "If you had any questions or got stuck somewhere, just reply here — we'll help you through it.",
@@ -40,10 +43,10 @@ const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: stri
   3: {
     name: "incomplete_applications_3_final",
     emailTemplate: "incomplete_applications_3",
-    body: (fullName) => [
+    body: (fullName, cohort) => [
       fullName,
       "last one from us 🙏",
-      "Cohort 1 is filling up and your application is still pending.",
+      `${cohort.name} is filling up and your application is still pending.`,
       "isn't the right fit",
       "But if you're still interested — this is the nudge.",
       "application from where you left off",
@@ -102,6 +105,7 @@ export async function runIncompleteApplicantReminder(
     .orderBy("createdAt", "asc")
     .limit(BATCH_CAP);
   const docs = await resolveCronDocs(collectionRef, query, opts.testId);
+  const activeCohort = await getActiveCohort();
 
   let sent = 0;
   let failed = 0;
@@ -126,7 +130,7 @@ export async function runIncompleteApplicantReminder(
       await sendWhatsAppTemplate({
         to: toWhatsAppId(String(mobileNumber)),
         templateName: template.name,
-        bodyParams: template.body(String(fullName)),
+        bodyParams: template.body(String(fullName), activeCohort),
         buttonUrl: APPLY_URL,
       });
       await doc.ref.update({ reminderStage: stage, lastReminderSentAt: FieldValue.serverTimestamp() });

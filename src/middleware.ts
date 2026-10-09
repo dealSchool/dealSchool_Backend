@@ -41,6 +41,7 @@ export const config = {
     "/applications/:path*",
     "/auth/:path*",
     "/brochure-requests/:path*",
+    "/cohorts/:path*",
     "/contacts/:path*",
     "/payment/:path*",
     "/settings/:path*",

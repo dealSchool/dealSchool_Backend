@@ -130,6 +130,7 @@ function esc(s: string): string {
 // ─── Application received — candidate ────────────────────────────────────────
 
 export interface AppReceivedCandidateProps {
+  cohortName?: string;
   fullName: string;
   currentStatus: string;
   affiliationLabel: string;
@@ -140,7 +141,7 @@ export interface AppReceivedCandidateProps {
 export function renderAppReceivedCandidate(pr: AppReceivedCandidateProps): string {
   return base(`
 ${greeting(pr.fullName)}
-${p("Thank you for applying to the <strong style=\"color:#082C6C;\">DealSchool Venture Fellowship</strong>. We're excited to review your application, and our admissions committee will be in touch soon.")}
+${p(`Thank you for applying to the <strong style="color:#082C6C;">DealSchool Venture Fellowship${pr.cohortName ? ` (${esc(pr.cohortName)})` : ""}</strong>. We're excited to review your application, and our admissions committee will be in touch soon.`)}
 ${infoBanner("&#10003;&nbsp;&nbsp;Your application has been successfully received and is currently pending review by our admissions committee.")}
 ${sectionTitle("Application Summary")}
 <div style="padding:9px 0 9px 14px;border-left:2px solid #EDE9DE;margin-bottom:6px;">
@@ -161,6 +162,7 @@ ${signature("DealSchool Admissions Team")}`);
 // ─── Application received — admin ────────────────────────────────────────────
 
 export interface AppReceivedAdminProps {
+  cohortName?: string;
   fullName: string;
   email: string;
   mobileNumber: string;
@@ -193,7 +195,7 @@ export interface AppReceivedAdminProps {
 export function renderAppReceivedAdmin(pr: AppReceivedAdminProps): string {
   return base(`
 <p style="margin:0 0 4px;font-family:${FONT};font-size:11px;color:#5F6368;text-transform:uppercase;letter-spacing:1.5px;">New Submission</p>
-<p style="margin:0 0 20px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Fellowship Application Received</p>
+<p style="margin:0 0 20px;font-family:${SERIF};font-size:20px;font-weight:600;color:#082C6C;">Fellowship Application Received${pr.cohortName ? ` &middot; ${esc(pr.cohortName)}` : ""}</p>
 
 ${sectionTitle("Applicant Information")}
 ${twoCol(field("Full Name", pr.fullName), field("Email Address", pr.email))}
@@ -237,10 +239,11 @@ export function renderPaymentLinkEmail(pr: {
   fullName: string;
   linkUrl: string;
   feeDisplay: string;
+  cohortName?: string;
 }): string {
   return base(`
 ${greeting(pr.fullName)}
-${p("Congratulations, you've been <strong style=\"color:#082C6C;\">accepted to the DealSchool Venture Fellowship!</strong> We're thrilled to have you join this cohort.")}
+${p(`Congratulations, you've been <strong style="color:#082C6C;">accepted to the DealSchool Venture Fellowship!</strong> We're thrilled to have you join ${pr.cohortName ? esc(pr.cohortName) : "this cohort"}.`)}
 ${infoBanner(`To confirm and secure your seat, please complete the fellowship fee payment of <strong>${esc(pr.feeDisplay)}</strong> using the secure link below.`)}
 ${sectionTitle("Payment Details")}
 ${field("Fellowship Fee", pr.feeDisplay)}
@@ -259,12 +262,13 @@ export interface PaymentReceiptEmailProps {
   paidOnDisplay?: string;
   applicantEmail?: string;
   mobileNumber?: string;
+  cohortName?: string;
 }
 
 export function renderPaymentReceiptEmail(pr: PaymentReceiptEmailProps): string {
   return base(`
 ${greeting(pr.applicantName)}
-${p("Your payment has been <strong style=\"color:#082C6C;\">confirmed</strong>. Welcome to the DealSchool Venture Fellowship. We're delighted to have you on board!")}
+${p(`Your payment has been <strong style="color:#082C6C;">confirmed</strong>. Welcome to the DealSchool Venture Fellowship${pr.cohortName ? ` (${esc(pr.cohortName)})` : ""}. We're delighted to have you on board!`)}
 <div style="text-align:center;margin:28px 0 24px;">
   <div style="width:56px;height:56px;line-height:56px;border-radius:50%;background:#1E8E3E;color:#ffffff;font-size:28px;font-weight:700;margin:0 auto 16px;">&#10003;</div>
   <p style="margin:0;font-family:${SERIF};font-size:34px;font-weight:700;color:#082C6C;">${esc(pr.feeDisplay)}</p>

@@ -5,6 +5,7 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import { serializeDoc } from "@/lib/serialize";
 import { logInfo, logError } from "@/lib/logger";
+import { cohortOf, parseCohortFilter } from "@/lib/cohort-settings";
 
 export const runtime = "nodejs";
 
@@ -113,22 +114,22 @@ const APPLICANT_CORE_COLUMNS = [
 ];
 
 const APPLICATION_COLUMNS = [
-  "id", "stage", ...APPLICANT_CORE_COLUMNS,
+  "id", "cohort", "stage", ...APPLICANT_CORE_COLUMNS,
   "agreedToTerms", "paymentStatus", "paymentAmountInr", "paidAt",
   "refundPercent", "cancellationReason", "cancelledAt", "createdAt", "updatedAt",
 ];
 
 const DRAFT_COLUMNS = [
-  "id", "stage", "currentStep", ...APPLICANT_CORE_COLUMNS, "createdAt", "updatedAt",
+  "id", "cohort", "stage", "currentStep", ...APPLICANT_CORE_COLUMNS, "createdAt", "updatedAt",
 ];
 
 const CONTACT_COLUMNS = [
-  "id", "status", "name", "email", "subject", "message",
+  "id", "cohort", "status", "name", "email", "subject", "message",
   "replyCount", "repliesSummary", "createdAt", "updatedAt",
 ];
 
 const BROCHURE_COLUMNS = [
-  "id", "name", "email", "contact", "city", "ip", "createdAt", "updatedAt",
+  "id", "cohort", "name", "email", "contact", "city", "ip", "createdAt", "updatedAt",
 ];
 
 // Casts a Firestore Query.stream() (typed as NodeJS.ReadableStream) to the
@@ -177,7 +178,8 @@ async function collectSorted(
 // produced one at a time rather than the whole export waiting to finish
 // before anything is sent to the client.
 async function* generateRows(
-  paymentsById: Map<string, Record<string, any>>
+  paymentsById: Map<string, Record<string, any>>,
+  cohort: number | null,
 ): AsyncGenerator<string> {
   let appCount = 0, draftCount = 0, contactCount = 0, brochureCount = 0;
 
@@ -192,11 +194,13 @@ async function* generateRows(
   const appStream = adminDb.collection("applications").stream();
   const appLines = await collectSorted(asDocStream(appStream), (doc) => {
     const data    = serializeDoc(doc.data());
+    if (cohort !== null && cohortOf(data) !== cohort) return null;
     const payment = paymentsById.get(doc.id);
     const paymentStatus = String(data.paymentStatus ?? payment?.status ?? "");
 
     const line = csvLine([
       doc.id,
+      String(cohortOf(data)),
       APPLICATION_STATUS_LABELS[String(data.status)] || String(data.status ?? ""),
       ...applicantCoreValues(data),
       data.agreedToTerms === true ? "true" : "false",
@@ -225,6 +229,7 @@ async function* generateRows(
   const draftLines = await collectSorted(asDocStream(draftStream), (doc) => {
     const data = serializeDoc(doc.data());
     if (data.status === "submitted") return null; // already represented in Section 1
+    if (cohort !== null && cohortOf(data) !== cohort) return null;
 
     const updatedAtMs = data.updatedAt ? new Date(data.updatedAt).getTime() : now;
     const isAbandoned = now - updatedAtMs > ABANDONED_AFTER_MS;
@@ -232,6 +237,7 @@ async function* generateRows(
 
     const line = csvLine([
       doc.id,
+      String(cohortOf(data)),
       isAbandoned ? "Abandoned" : "In Progress",
       `Step ${step} of 5`,
       ...applicantCoreValues({ ...data.formData, email: data.email, mobileNumber: data.mobileNumber }),
@@ -251,6 +257,7 @@ async function* generateRows(
   const contactStream = adminDb.collection("contacts").stream();
   const contactLines = await collectSorted(asDocStream(contactStream), (doc) => {
     const data = serializeDoc(doc.data());
+    if (cohort !== null && cohortOf(data) !== cohort) return null;
     // replies[].sentAt is a Timestamp nested inside an array — serializeDoc only
     // converts top-level fields, so it needs its own conversion here.
     const replies = Array.isArray(data.replies)
@@ -265,6 +272,7 @@ async function* generateRows(
 
     const line = csvLine([
       doc.id,
+      String(cohortOf(data)),
       capitalize(String(data.status ?? "")),
       String(data.name ?? ""),
       String(data.email ?? ""),
@@ -288,8 +296,10 @@ async function* generateRows(
   const brochureStream = adminDb.collection("brochureRequests").stream();
   const brochureLines = await collectSorted(asDocStream(brochureStream), (doc) => {
     const data = serializeDoc(doc.data());
+    if (cohort !== null && cohortOf(data) !== cohort) return null;
     const line = csvLine([
       doc.id,
+      String(cohortOf(data)),
       String(data.name ?? ""),
       String(data.email ?? ""),
       String(data.contact ?? ""),
@@ -371,6 +381,12 @@ export async function GET(request: NextRequest) {
   try { await verifyAdmin(request); }
   catch { return NextResponse.json({ error: "Unauthorized" }, { status: 401, headers }); }
 
+  // ?cohort=<n> exports one cohort only; omitted / "all" exports everything.
+  const { cohort, invalid } = parseCohortFilter(new URL(request.url).searchParams.get("cohort"));
+  if (invalid) {
+    return NextResponse.json({ error: "cohort must be a positive integer or \"all\"" }, { status: 400, headers });
+  }
+
   try {
     // Payments are only ever created for applications that reached "accepted" —
     // a small, bounded subset of all applicants — so loading this one
@@ -385,8 +401,8 @@ export async function GET(request: NextRequest) {
       paymentsById.set(doc.id, serializeDoc(doc.data()));
     }
 
-    const body = toResponseStream(batchLines(generateRows(paymentsById), STREAM_BATCH_SIZE));
-    const filename = `dealschool-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    const body = toResponseStream(batchLines(generateRows(paymentsById, cohort), STREAM_BATCH_SIZE));
+    const filename = `dealschool-export${cohort ? `-cohort-${cohort}` : ""}-${new Date().toISOString().slice(0, 10)}.csv`;
 
     return new NextResponse(body, {
       status: 200,
