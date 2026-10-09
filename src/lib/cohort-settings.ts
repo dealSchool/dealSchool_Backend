@@ -38,6 +38,10 @@ export type CohortSettings = Cohort;
 // verify-admin.ts's admin-doc cache, which works here because this runs as a
 // persistent Node process, not serverless. Invalidated on every write.
 const CACHE_TTL_MS = 60 * 1000;
+// The active-cohort pointer decides which cohort every new record is stamped
+// with, so it gets a much shorter TTL — if the app ever runs as several
+// processes, a stale copy would attach new applications to the previous cohort.
+const ACTIVE_COHORT_TTL_MS = 10 * 1000;
 let settingsCache: { data: FirebaseFirestore.DocumentData | undefined; expiresAt: number } | null = null;
 const cohortCache = new Map<number, { cohort: Cohort; expiresAt: number }>();
 
@@ -50,12 +54,31 @@ async function readSettingsDoc(): Promise<FirebaseFirestore.DocumentData | undef
   if (settingsCache && Date.now() < settingsCache.expiresAt) return settingsCache.data;
   const snap = await SETTINGS_DOC.get();
   const data = snap.exists ? snap.data() : undefined;
-  settingsCache = { data, expiresAt: Date.now() + CACHE_TTL_MS };
+  settingsCache = { data, expiresAt: Date.now() + ACTIVE_COHORT_TTL_MS };
   return data;
 }
 
 function isCohortNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+// Strict parser for a cohort number coming from a request (query string or JSON
+// body): a positive whole number, or a string of plain digits. Rejects booleans,
+// null, "1e3", "0x10", "1.5", "-1", "" … so nothing is silently coerced into a
+// real cohort (e.g. Number(true) === 1).
+export function parseCohortNumber(v: unknown): number | null {
+  if (typeof v === "number") return isCohortNumber(v) && v <= 999_999_999 ? v : null;
+  if (typeof v === "string" && /^[1-9]\d{0,8}$/.test(v.trim())) return Number(v.trim());
+  return null;
+}
+
+// Admin-typed cohort names end up in emails and WhatsApp template parameters
+// (which reject newlines/tabs), so strip control characters, collapse runs of
+// whitespace and cap the length. Returns undefined when nothing usable is left.
+export function sanitizeCohortName(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const cleaned = raw.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 60).trim();
+  return cleaned || undefined;
 }
 
 // A record's cohort — records from before cohorts existed have no field and
@@ -102,6 +125,15 @@ export async function getActiveCohort(): Promise<Cohort> {
   return getCohort(await getActiveCohortNumber());
 }
 
+// "YYYY-MM-DD" of the start date in the SERVER's local calendar — the same
+// calendar the date was entered in and that refund tiers are computed in.
+// toISOString() converts to UTC, which shows the previous day on a server whose
+// timezone is ahead of UTC (e.g. IST), so the admin UI uses this for editing.
+export function localDateString(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 // Existing callers (fee calc, GET /settings/cohort) — now resolves to the
 // active cohort. Callers that act on an existing record should use
 // getCohort(cohortOf(record)) instead so a Cohort 1 record isn't priced or
@@ -122,9 +154,20 @@ export async function listCohorts(): Promise<{ cohorts: Cohort[]; activeCohort: 
   return { cohorts, activeCohort };
 }
 
+// "YYYY-MM-DD" only, and it must be a real calendar day — JS would otherwise
+// roll "2027-02-30" over to March 2.
 function parseDate(dateStr: string): Date {
-  const date = new Date(`${dateStr}T00:00:00`);
-  if (Number.isNaN(date.getTime())) throw new Error("Invalid date");
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr).trim());
+  if (!m) throw new Error("Invalid date");
+  const date = new Date(`${m[0]}T00:00:00`);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== Number(m[1]) ||
+    date.getMonth() + 1 !== Number(m[2]) ||
+    date.getDate() !== Number(m[3])
+  ) {
+    throw new Error("Invalid date");
+  }
   return date;
 }
 
@@ -133,9 +176,18 @@ function parseFee(feeInRupees: number): number {
   return Math.round(feeInRupees * 100);
 }
 
+export class CohortNotFoundError extends Error {}
+
+// Cohort 1 always exists (legacy/default); every other cohort needs its doc.
+export async function cohortExists(number: number): Promise<boolean> {
+  if (number === LEGACY_COHORT) return true;
+  return (await COHORTS.doc(String(number)).get()).exists;
+}
+
 export async function setCohortStartDate(dateStr: string, cohortNumber?: number): Promise<Date> {
   const date = parseDate(dateStr);
   const n = cohortNumber ?? await getActiveCohortNumber();
+  if (!(await cohortExists(n))) throw new CohortNotFoundError(`Cohort ${n} does not exist`);
   await COHORTS.doc(String(n)).set(
     { number: n, startDate: Timestamp.fromDate(date), updatedAt: FieldValue.serverTimestamp() },
     { merge: true },
@@ -147,6 +199,7 @@ export async function setCohortStartDate(dateStr: string, cohortNumber?: number)
 export async function setCohortFee(feeInRupees: number, cohortNumber?: number): Promise<number> {
   const feePaise = parseFee(feeInRupees);
   const n = cohortNumber ?? await getActiveCohortNumber();
+  if (!(await cohortExists(n))) throw new CohortNotFoundError(`Cohort ${n} does not exist`);
   await COHORTS.doc(String(n)).set(
     { number: n, feePaise, updatedAt: FieldValue.serverTimestamp() },
     { merge: true },
@@ -155,16 +208,11 @@ export async function setCohortFee(feeInRupees: number, cohortNumber?: number): 
   return feePaise;
 }
 
-export class CohortNotFoundError extends Error {}
-
 // Switch which cohort new applications/drafts/messages/brochure requests are
 // stamped with. Existing records are never touched.
 export async function setActiveCohort(number: number): Promise<void> {
   if (!isCohortNumber(number)) throw new Error("Invalid cohort number");
-  if (number !== LEGACY_COHORT) {
-    const snap = await COHORTS.doc(String(number)).get();
-    if (!snap.exists) throw new CohortNotFoundError(`Cohort ${number} does not exist`);
-  }
+  if (!(await cohortExists(number))) throw new CohortNotFoundError(`Cohort ${number} does not exist`);
   await SETTINGS_DOC.set({ activeCohort: number, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   invalidateCohortCache();
 }
@@ -194,7 +242,7 @@ export async function startNewCohort(input: {
 
     t.set(COHORTS.doc(String(next)), {
       number:    next,
-      name:      input.name?.trim() || `Cohort ${next}`,
+      name:      sanitizeCohortName(input.name) ?? `Cohort ${next}`,
       startDate: Timestamp.fromDate(startDate),
       feePaise,
       ...(input.seats !== undefined && { seats: input.seats }),
@@ -214,8 +262,8 @@ export async function startNewCohort(input: {
 // Parses the dashboard's ?cohort= filter. Missing / empty / "all" = no filter.
 export function parseCohortFilter(raw: string | null): { cohort: number | null; invalid: boolean } {
   if (raw === null || raw.trim() === "" || raw.trim().toLowerCase() === "all") return { cohort: null, invalid: false };
-  const n = Number(raw);
-  return isCohortNumber(n) ? { cohort: n, invalid: false } : { cohort: null, invalid: true };
+  const n = parseCohortNumber(raw);
+  return n !== null ? { cohort: n, invalid: false } : { cohort: null, invalid: true };
 }
 
 // Cache key for the first-page list caches — the page size alone is no longer

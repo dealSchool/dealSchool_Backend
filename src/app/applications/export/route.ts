@@ -114,22 +114,22 @@ const APPLICANT_CORE_COLUMNS = [
 ];
 
 const APPLICATION_COLUMNS = [
-  "id", "cohort", "stage", ...APPLICANT_CORE_COLUMNS,
+  "id", "stage", ...APPLICANT_CORE_COLUMNS,
   "agreedToTerms", "paymentStatus", "paymentAmountInr", "paidAt",
-  "refundPercent", "cancellationReason", "cancelledAt", "createdAt", "updatedAt",
+  "refundPercent", "cancellationReason", "cancelledAt", "createdAt", "updatedAt", "cohort",
 ];
 
 const DRAFT_COLUMNS = [
-  "id", "cohort", "stage", "currentStep", ...APPLICANT_CORE_COLUMNS, "createdAt", "updatedAt",
+  "id", "stage", "currentStep", ...APPLICANT_CORE_COLUMNS, "createdAt", "updatedAt", "cohort",
 ];
 
 const CONTACT_COLUMNS = [
-  "id", "cohort", "status", "name", "email", "subject", "message",
-  "replyCount", "repliesSummary", "createdAt", "updatedAt",
+  "id", "status", "name", "email", "subject", "message",
+  "replyCount", "repliesSummary", "createdAt", "updatedAt", "cohort",
 ];
 
 const BROCHURE_COLUMNS = [
-  "id", "cohort", "name", "email", "contact", "city", "ip", "createdAt", "updatedAt",
+  "id", "name", "email", "contact", "city", "ip", "createdAt", "updatedAt", "cohort",
 ];
 
 // Casts a Firestore Query.stream() (typed as NodeJS.ReadableStream) to the
@@ -200,7 +200,6 @@ async function* generateRows(
 
     const line = csvLine([
       doc.id,
-      String(cohortOf(data)),
       APPLICATION_STATUS_LABELS[String(data.status)] || String(data.status ?? ""),
       ...applicantCoreValues(data),
       data.agreedToTerms === true ? "true" : "false",
@@ -212,6 +211,7 @@ async function* generateRows(
       String(data.cancelledAt ?? ""),
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
+      String(cohortOf(data)),
     ]);
     return { sortKey: toSortKey(data.createdAt), line };
   });
@@ -237,12 +237,12 @@ async function* generateRows(
 
     const line = csvLine([
       doc.id,
-      String(cohortOf(data)),
       isAbandoned ? "Abandoned" : "In Progress",
       `Step ${step} of 5`,
       ...applicantCoreValues({ ...data.formData, email: data.email, mobileNumber: data.mobileNumber }),
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
+      String(cohortOf(data)),
     ]);
     return { sortKey: toSortKey(data.updatedAt), line };
   });
@@ -272,7 +272,6 @@ async function* generateRows(
 
     const line = csvLine([
       doc.id,
-      String(cohortOf(data)),
       capitalize(String(data.status ?? "")),
       String(data.name ?? ""),
       String(data.email ?? ""),
@@ -282,6 +281,7 @@ async function* generateRows(
       repliesSummary,
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
+      String(cohortOf(data)),
     ]);
     return { sortKey: toSortKey(data.createdAt), line };
   });
@@ -299,7 +299,6 @@ async function* generateRows(
     if (cohort !== null && cohortOf(data) !== cohort) return null;
     const line = csvLine([
       doc.id,
-      String(cohortOf(data)),
       String(data.name ?? ""),
       String(data.email ?? ""),
       String(data.contact ?? ""),
@@ -307,6 +306,7 @@ async function* generateRows(
       String(data.ip ?? ""),
       String(data.createdAt ?? ""),
       String(data.updatedAt ?? ""),
+      String(cohortOf(data)),
     ]);
     return { sortKey: toSortKey(data.createdAt), line };
   });

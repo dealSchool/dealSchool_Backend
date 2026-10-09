@@ -19,14 +19,15 @@ const STAGE_HOURS: Record<ReminderStage, number> = { 1: 1, 2: 24, 3: 36 };
 // (e.g. "_final") that the email templates don't use.
 // The apply link always leads to the currently active cohort's form, so the
 // seat-scarcity copy names the active cohort rather than a hardcoded one.
-const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: string; body: (fullName: string, cohort: Cohort) => string[] }> = {
+const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: string; body: (fullName: string, cohort: Cohort | null) => string[] }> = {
   1: {
     name: "incomplete_applications_1",
     emailTemplate: "incomplete_applications_1",
     body: (fullName, cohort) => [
       fullName,
       "you started your DealSchool application but didn't finish it.",
-      cohort.seats ? `${cohort.name} has only ${cohort.seats} seats.` : `${cohort.name} has limited seats.`,
+      !cohort ? "Seats are limited."
+        : cohort.seats ? `${cohort.name} has only ${cohort.seats} seats.` : `${cohort.name} has limited seats.`,
       "application from where you left off",
     ],
   },
@@ -46,7 +47,7 @@ const STAGE_TEMPLATES: Record<ReminderStage, { name: string; emailTemplate: stri
     body: (fullName, cohort) => [
       fullName,
       "last one from us 🙏",
-      `${cohort.name} is filling up and your application is still pending.`,
+      cohort ? `${cohort.name} is filling up and your application is still pending.` : "Seats are filling up and your application is still pending.",
       "isn't the right fit",
       "But if you're still interested — this is the nudge.",
       "application from where you left off",
@@ -105,7 +106,11 @@ export async function runIncompleteApplicantReminder(
     .orderBy("createdAt", "asc")
     .limit(BATCH_CAP);
   const docs = await resolveCronDocs(collectionRef, query, opts.testId);
-  const activeCohort = await getActiveCohort();
+  // A settings read hiccup must not stop every nudge — fall back to neutral wording.
+  const activeCohort = await getActiveCohort().catch((err) => {
+    logError("incomplete-applicant-reminders", "Could not load the active cohort — using generic wording", err);
+    return null;
+  });
 
   let sent = 0;
   let failed = 0;

@@ -46,6 +46,7 @@ export async function PATCH(
   };
   delete updatePayload.id;
   delete updatePayload.createdAt;
+  delete updatePayload.cohort; // server-owned — stamped at creation, never editable via PATCH
 
   await docRef.update(updatePayload);
   invalidateContactsListCache();

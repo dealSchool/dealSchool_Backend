@@ -3,9 +3,12 @@ import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
 import {
   CohortNotFoundError,
+  cohortExists,
+  localDateString,
   getActiveCohort,
   getActiveCohortNumber,
   getCohort,
+  parseCohortNumber,
   setActiveCohort,
   setCohortStartDate,
   setCohortFee,
@@ -22,6 +25,7 @@ function serializeCohort(c: Cohort, activeCohort: number) {
     isActive:     c.number === activeCohort,
     activeCohort,
     startDate:    c.startDate.toISOString(),
+    startDateLocal: localDateString(c.startDate),
     seats:        c.seats,
     feePaise:     c.feePaise,
     feeInRupees:  c.feePaise / 100,
@@ -39,9 +43,12 @@ export async function GET(request: NextRequest) {
 
   const activeCohort = await getActiveCohortNumber();
   const raw = new URL(request.url).searchParams.get("cohort");
-  const requested = raw === null ? activeCohort : Number(raw);
-  if (!Number.isInteger(requested) || requested < 1) {
+  const requested = raw === null ? activeCohort : parseCohortNumber(raw);
+  if (requested === null) {
     return NextResponse.json({ error: "cohort must be a positive integer" }, { status: 400, headers });
+  }
+  if (requested !== activeCohort && !(await cohortExists(requested))) {
+    return NextResponse.json({ error: `Cohort ${requested} does not exist` }, { status: 404, headers });
   }
 
   const cohort = requested === activeCohort ? await getActiveCohort() : await getCohort(requested);
@@ -67,6 +74,10 @@ export async function PATCH(request: NextRequest) {
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }
 
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Request body must be a JSON object" }, { status: 400, headers });
+  }
+
   const hasStartDate    = typeof body.startDate === "string" && body.startDate.trim() !== "";
   const hasFee          = typeof body.feeInRupees === "number" && Number.isFinite(body.feeInRupees);
   const hasActiveSwitch = body.activeCohort !== undefined;
@@ -78,15 +89,22 @@ export async function PATCH(request: NextRequest) {
     );
   }
 
+  // Strict parsing — never coerce junk (true, null, "1e3"…) into a real cohort number.
+  const switchTo = hasActiveSwitch ? parseCohortNumber(body.activeCohort) : undefined;
+  if (hasActiveSwitch && switchTo === null) {
+    return NextResponse.json({ error: "activeCohort must be a positive integer" }, { status: 400, headers });
+  }
+  const explicitTarget = body.cohort !== undefined ? parseCohortNumber(body.cohort) : undefined;
+  if (body.cohort !== undefined && explicitTarget === null) {
+    return NextResponse.json({ error: "cohort must be a positive integer" }, { status: 400, headers });
+  }
+
   try {
-    if (hasActiveSwitch) {
-      await setActiveCohort(Number(body.activeCohort));
+    if (switchTo != null) {
+      await setActiveCohort(switchTo);
     }
 
-    const target = body.cohort !== undefined ? Number(body.cohort) : await getActiveCohortNumber();
-    if (!Number.isInteger(target) || target < 1) {
-      return NextResponse.json({ error: "cohort must be a positive integer" }, { status: 400, headers });
-    }
+    const target = explicitTarget ?? await getActiveCohortNumber();
 
     if (hasStartDate) await setCohortStartDate(body.startDate.trim(), target);
     if (hasFee) await setCohortFee(body.feeInRupees, target);
@@ -99,7 +117,7 @@ export async function PATCH(request: NextRequest) {
   }
 
   const activeCohort = await getActiveCohortNumber();
-  const cohort = await getCohort(body.cohort !== undefined ? Number(body.cohort) : activeCohort);
+  const cohort = await getCohort(explicitTarget ?? activeCohort);
   const s = serializeCohort(cohort, activeCohort);
   logInfo("api/settings/cohort", "Cohort settings updated", { cohort: String(s.cohort), startDate: s.startDate, feePaise: String(s.feePaise), activeCohort: String(activeCohort) });
 

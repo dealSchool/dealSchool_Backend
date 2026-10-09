@@ -117,6 +117,9 @@ export async function PATCH(
   };
   delete updatePayload.id;
   delete updatePayload.createdAt;
+  // `cohort` is stamped by the server when the application is created — a stray
+  // or malformed value in a PATCH body must never overwrite it.
+  delete updatePayload.cohort;
 
   // Strip payment-sensitive fields — prevents an admin from manually forging
   // a paid status without an actual Cashfree transaction.

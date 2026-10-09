@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { corsHeaders, handlePreflight } from "@/lib/cors";
 import { verifyAdmin } from "@/lib/verify-admin";
-import { listCohorts, startNewCohort, type Cohort } from "@/lib/cohort-settings";
+import { listCohorts, localDateString, startNewCohort, type Cohort } from "@/lib/cohort-settings";
 import { logInfo, logWarn, logError } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -12,6 +12,7 @@ function serialize(c: Cohort, activeCohort: number) {
     name:        c.name,
     isActive:    c.number === activeCohort,
     startDate:   c.startDate.toISOString(),
+    startDateLocal: localDateString(c.startDate),
     seats:       c.seats,
     feeInRupees: c.feePaise / 100,
     feeDisplay:  `₹${(c.feePaise / 100).toFixed(0)}`,
@@ -54,6 +55,10 @@ export async function POST(request: NextRequest) {
   let body: any;
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400, headers }); }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Request body must be a JSON object" }, { status: 400, headers });
+  }
 
   if (typeof body.startDate !== "string" || !body.startDate.trim() || typeof body.feeInRupees !== "number") {
     return NextResponse.json(

@@ -202,6 +202,25 @@ Restart the server after changing this value.
 
 ---
 
+## Cohorts
+
+Every applicant-facing record (`applications`, `applicationDrafts`, `contacts`, `brochureRequests`, `payments`) carries a numeric `cohort` field (1, 2, 3…). It is stamped **server-side** with the active cohort when the record is created — never taken from the request body. Records created before cohorts existed have no field and are treated as Cohort 1 (`GET /admin/backfill-cohort?apply=true` stamps them once).
+
+Cohort details live in `cohorts/{n}` (name, start date, fee, seats); `settings/cohort.activeCohort` points at the active one. Cohort 1 falls back to the legacy `startDate`/`feePaise` stored on `settings/cohort`.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/cohorts` | Admin — all cohorts + which is active (feeds the dashboard filter) |
+| `POST` | `/cohorts` | Admin — `{ startDate: "YYYY-MM-DD", feeInRupees, name?, seats? }` creates the next cohort and makes it active |
+| `GET` | `/settings/cohort[?cohort=n]` | Admin — active cohort's settings (or cohort `n`) |
+| `PATCH` | `/settings/cohort` | Admin — `{ startDate?, feeInRupees?, cohort?, activeCohort? }` edit a cohort (default: the active one) or switch the active cohort |
+
+List endpoints (`/applications`, `/applications/draft`, `/contacts`, `/brochure-requests`) and `/applications/export` accept `?cohort=<n|all>`; counts follow the filter. Duplicate-application checks are per cohort, a payment link is priced at the applicant's **own** cohort's fee, and the cancellation refund tier uses that cohort's start date.
+
+The `?cohort=` filters need the composite indexes in `firestore.indexes.json` — deploy them with `firebase deploy --only firestore:indexes` before relying on the filters.
+
+---
+
 ## Available Scripts
 
 ```bash
