@@ -213,7 +213,7 @@ Cohort details live in `cohorts/{n}` (name, start date, fee, seats); `settings/c
 | `GET` | `/cohorts` | Admin — all cohorts + which is active (feeds the dashboard filter) |
 | `POST` | `/cohorts` | Admin — `{ startDate: "YYYY-MM-DD", feeInRupees, name?, seats? }` creates the next cohort and makes it active |
 | `GET` | `/settings/cohort[?cohort=n]` | Admin — active cohort's settings (or cohort `n`) |
-| `PATCH` | `/settings/cohort` | Admin — `{ startDate?, feeInRupees?, cohort?, activeCohort? }` edit a cohort (default: the active one) or switch the active cohort |
+| `PATCH` | `/settings/cohort` | Admin — `{ startDate?, feeInRupees?, seats?, cohort?, activeCohort? }` edit a cohort (default: the active one) or switch the active cohort |
 
 List endpoints (`/applications`, `/applications/draft`, `/contacts`, `/brochure-requests`) and `/applications/export` accept `?cohort=<n|all>`; counts follow the filter. Duplicate-application checks are per cohort, a payment link is priced at the applicant's **own** cohort's fee, and the cancellation refund tier uses that cohort's start date.
 

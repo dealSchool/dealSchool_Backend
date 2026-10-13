@@ -171,6 +171,11 @@ function parseDate(dateStr: string): Date {
   return date;
 }
 
+// A whole number of seats, 1 – 100000 (shared by "start cohort" and "edit seats").
+export function isValidSeats(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 && v <= 100_000;
+}
+
 function parseFee(feeInRupees: number): number {
   if (!Number.isFinite(feeInRupees) || feeInRupees <= 0) throw new Error("Invalid fee");
   return Math.round(feeInRupees * 100);
@@ -208,6 +213,20 @@ export async function setCohortFee(feeInRupees: number, cohortNumber?: number): 
   return feePaise;
 }
 
+// Seat count shown in reminder messages ("Cohort 2 has only 20 seats."). Editable
+// at any time; it is display copy only and doesn't limit how many people can apply.
+export async function setCohortSeats(seats: number, cohortNumber?: number): Promise<number> {
+  if (!isValidSeats(seats)) throw new Error("Invalid seats");
+  const n = cohortNumber ?? await getActiveCohortNumber();
+  if (!(await cohortExists(n))) throw new CohortNotFoundError(`Cohort ${n} does not exist`);
+  await COHORTS.doc(String(n)).set(
+    { number: n, seats, updatedAt: FieldValue.serverTimestamp() },
+    { merge: true },
+  );
+  invalidateCohortCache();
+  return seats;
+}
+
 // Switch which cohort new applications/drafts/messages/brochure requests are
 // stamped with. Existing records are never touched.
 export async function setActiveCohort(number: number): Promise<void> {
@@ -227,7 +246,7 @@ export async function startNewCohort(input: {
 }): Promise<Cohort> {
   const startDate = parseDate(input.startDate);
   const feePaise  = parseFee(input.feeInRupees);
-  if (input.seats !== undefined && !(Number.isInteger(input.seats) && input.seats > 0)) {
+  if (input.seats !== undefined && !isValidSeats(input.seats)) {
     throw new Error("Invalid seats");
   }
 
