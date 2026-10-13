@@ -66,9 +66,32 @@ export const CHEERIO_EMAIL_TEMPLATES: Record<string, CheerioEmailTemplate> = {
   },
 };
 
+// The two incomplete-application emails were written for Cohort 1 and name it
+// in the copy. Those exact phrases are swapped for the active cohort's name and
+// seat count at send time. `cohort === undefined` (caller doesn't care) leaves
+// the stored copy untouched; `null` (cohort lookup failed) uses neutral wording
+// instead of naming the wrong cohort. A phrase that no longer exists in the
+// template is simply skipped.
+export interface CohortCopy { name: string; seats: number | null }
+
+function personalizeForCohort(html: string, cohort: CohortCopy | null | undefined): string {
+  if (cohort === undefined) return html;
+  const heading  = cohort ? `from ${cohort.name}</h1>` : "from the fellowship</h1>";
+  const capacity = !cohort ? "Seats are limited"
+    : cohort.seats ? `${cohort.name} is capped at ${cohort.seats} seats`
+    : `${cohort.name} has limited seats`;
+  return html
+    .split("from Cohort 1</h1>").join(heading)
+    .split("Cohort 1 is capped at 20 seats").join(capacity);
+}
+
 // Fire-and-forget-friendly wrapper used by every cron reminder lib alongside
 // its existing sendWhatsAppTemplate() call.
-export async function sendCheerioEmailTemplate(templateName: string, to: string): Promise<void> {
+export async function sendCheerioEmailTemplate(
+  templateName: string,
+  to: string,
+  opts: { cohort?: CohortCopy | null } = {},
+): Promise<void> {
   const template = CHEERIO_EMAIL_TEMPLATES[templateName];
   if (!template) {
     logWarn("cheerio-email-templates", `No email template registered for "${templateName}", skipping`, { to });
@@ -82,7 +105,7 @@ export async function sendCheerioEmailTemplate(templateName: string, to: string)
   await sendCheerioEmail({
     to,
     subject: template.subject,
-    htmlContent: template.html,
+    htmlContent: personalizeForCohort(template.html, opts.cohort),
     campaignName: templateName,
   });
 }

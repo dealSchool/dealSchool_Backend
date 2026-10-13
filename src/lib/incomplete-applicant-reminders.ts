@@ -156,7 +156,7 @@ export async function runIncompleteApplicantReminder(
       return;
     }
     try {
-      await sendCheerioEmailTemplate(template.emailTemplate, String(email));
+      await sendCheerioEmailTemplate(template.emailTemplate, String(email), { cohort: activeCohort });
       await doc.ref.update({ emailReminderStage: stage, lastEmailReminderSentAt: FieldValue.serverTimestamp() });
       emailSent += 1;
     } catch (err) {
